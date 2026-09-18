@@ -1,6 +1,6 @@
 <div align="center">
   <br>
-  <img src="assets/banner.png" width="620" alt="Bastion">
+  <img src="assets/bastion.png" width="620" alt="Bastion">
 
   <h2>bastion</h2>
   <p><i>intelligent server hardening & performance tuning</i></p>
