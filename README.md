@@ -1,27 +1,32 @@
 <div align="center">
-  <img src="assets/banner.png" width="740" alt="Bastion — Intelligent Server Hardening">
+  <br>
+  <img src="assets/banner.png" width="620" alt="Bastion">
 
-  <h1>🛡️ Bastion</h1>
-  <p><strong>Интеллектуальный комплекс автоматической защиты и глубокой оптимизации Linux VPS.</strong></p>
-  <p><em>Intelligent Linux VPS hardening, TCP/BBR acceleration & AI-driven tuning suite.</em></p>
-
+  <h2>bastion</h2>
+  <p><i>intelligent server hardening & performance tuning</i></p>
+  
   <p>
-    <a href="#-русский">🇷🇺 Русский</a> • <a href="#-english">🇬🇧 English</a>
+    <code>root</code> · <code>bbr</code> · <code>fail2ban</code> · <code>ufw</code> · <code>gemini-flash</code>
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/OS-Ubuntu_%7C_Debian-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="OS">
-    <img src="https://img.shields.io/badge/AI-Gemini_Flash-4285F4?style=for-the-badge&logo=google&logoColor=white" alt="AI Engine">
-    <img src="https://img.shields.io/badge/TCP-Google_BBR-00C7B7?style=for-the-badge&logo=fastapi&logoColor=white" alt="Network">
-    <img src="https://img.shields.io/badge/License-MIT-8A2BE2?style=for-the-badge" alt="License">
+    <a href="#-русский">русский</a> · <a href="#-english">english</a>
   </p>
+
+  <p>
+    <img src="https://img.shields.io/badge/os-ubuntu_%7C_debian-000000?style=flat-square&logo=linux&logoColor=white" alt="OS">
+    <img src="https://img.shields.io/badge/ai-gemini_flash-000000?style=flat-square&logo=google&logoColor=white" alt="AI">
+    <img src="https://img.shields.io/badge/tcp-google_bbr-000000?style=flat-square" alt="TCP">
+    <img src="https://img.shields.io/badge/license-mit-000000?style=flat-square" alt="License">
+  </p>
+  <br>
 </div>
 
 ---
 
-### ⚡ Instant Launch / Быстрый запуск
+### ⚡ Быстрый старт / Quick Start
 
-Запустите одну команду на чистом сервере (от имени `root`):
+Выполните одну команду от имени `root`:
 
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh)
@@ -31,111 +36,97 @@ bash <(curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh
 
 # 🇷🇺 Русский
 
-## ✨ О проекте
+## ◈ О проекте
 
-**Bastion** превращает свежеустановленный сервер в защищенную и разогнанную крепость за 60 секунд. Скрипт сочетает строгие стандарты безопасности Linux (CIS benchmark practices) с тюнингом ядра для максимальной пропускной способности сети.
+**Bastion** — минималистичный инструмент для превращения свежего VPS в защищенный и оптимизированный сервер за 60 секунд.
 
-Поддерживает работу с учетной записью `root`, не ломая вход по паролю, защищает от брутфорса и подбирает идеальные параметры ядра.
-
----
-
-## 🎯 3 режима работы
-
-<table>
-  <tr>
-    <td width="33%" align="center">
-      <h3>🚀 Automatic</h3>
-      <p>Мгновенная настройка в 1 клик. Применяет идеальные стандарты безопасности и оптимизации без лишних вопросов.</p>
-    </td>
-    <td width="33%" align="center">
-      <h3>🛠️ Manual Wizard</h3>
-      <p>Пошаговый интерактивный диалог. Каждый параметр имеет подсказку — достаточно нажимать <code>[Enter]</code> для выбора оптимума.</p>
-    </td>
-    <td width="33%" align="center">
-      <h3>🧠 AI-Powered</h3>
-      <p>Анализ через <b>Google Gemini Flash</b>. Нейросеть считывает CPU, RAM, диск и профиль нагрузки сервера и рассчитывает параметры персонально.</p>
-    </td>
-  </tr>
-</table>
+* Работает напрямую из-под `root` (вход по паролю сохранён).
+* Никакого визуального шума — чистый интерактивный интерфейс.
+* Тюнинг ядра по стандартам безопасности и скорости.
 
 ---
 
-## 🛡️ Безопасность (Hardening)
+## ◈ Режимы работы
 
-* 🔒 **OpenSSH Armor**: Защита от зависших сессий (`ClientAliveInterval`), лимит 3 попыток авторизации (`MaxAuthTries 3`), тайм-аут ввода пароля 30с (`LoginGraceTime 30`).
-* 🚫 **Fail2Ban Shield**: Автоматический бан IP-адресов ботов и сканеров при попытках подбора пароля по SSH (настраиваемое время блокировки).
-* 🧱 **UFW Firewall**: Политика «запрещено всё, что не разрешено». Открыт только нужный SSH-порт и веб (80/443 по желанию).
-* 🛡️ **Защита памяти `/dev/shm`**: Монтирование с флагами `noexec,nosuid,nodev` — блокирует запуск вредоносных бинарников и скриптов из временной памяти.
-* 🧬 **Защита ядра от DoS**: Включение криптографических кук `tcp_syncookies`, ограничение SYN-ACK ретраев, защита от Smurf-атак (`icmp_echo_ignore_broadcasts`).
-* 🕵️ **Анти-спуфинг IP**: Проверка обратного пути пакетов (`rp_filter = 1`) и отключение ICMP-редиректов.
-* 🔒 **Ограничение прав на ядро**: `kptr_restrict = 2`, `dmesg_restrict = 1` (скрытие адресов ядра и логов от непривилегированных процессов).
-* 🔄 **Автообновления безопасности**: Фоновая служба `unattended-upgrades` автоматически патчит уязвимости ОС без перезагрузок.
+| Режим | Описание |
+| :--- | :--- |
+| **`[1] Automatic`** | Моментальное применение оптимальных настроек без лишних вопросов. |
+| **`[2] Manual`** | Пошаговый диалог. Достаточно нажимать `[Enter]` для выбора дефолтных значений. |
+| **`[3] AI-Powered`** | Анализ через **Gemini Flash**. Нейросеть считывает CPU, RAM, диск и подбирает параметры. |
 
 ---
 
-## ⚡ Оптимизация производительности
+## ◈ Безопасность
 
-* 🌐 **Google BBR**: Активация современного алгоритма контроля перегрузки TCP от Google. Обеспечивает максимальную скорость передачи и минимальный пинг на загруженных каналах.
-* 🚀 **Тюнинг буферов TCP**: Увеличение сетевых окон чтения/записи до 16 МБ (`tcp_rmem`, `tcp_wmem`) для работы на 1–10 Гбит/с каналах.
-* 📂 **Лимит файлов 65535**: Снятие стандартного ограничения Linux в 1024 дескриптора на уровне ядра и `systemd` (забудьте про ошибку `Too many open files`).
-* 💾 **Swap & Swappiness**: Автоматическое создание файла подкачки с правами `600` и параметром `swappiness = 10` (сервер использует быстрый RAM, обращаясь к диску только в крайнем случае).
-* ⚙️ **Очереди сокетов**: Увеличение `somaxconn` до 65 535 и `netdev_max_backlog` до 10 000 для стабильной обработки наплыва клиентов.
+* **OpenSSH**: Ограничение попыток входа (`MaxAuthTries 3`), тайм-аут ожидания 30с (`LoginGraceTime 30`), отключение X11.
+* **Fail2Ban**: Автоматический бан IP-адресов при попытках подбора пароля по SSH.
+* **UFW**: Закрыты все входящие порты, кроме SSH и опционально веб (80/443).
+* **Защита `/dev/shm`**: Монтирование с флагами `noexec,nosuid,nodev` против исполнения скриптов из памяти.
+* **Ядро (DoS Shield)**: Криптографические `tcp_syncookies`, защита от спуфинга (`rp_filter`), игнорирование ICMP Broadcast.
+* **Права ядра**: Ограничение доступа к `dmesg` и адресам ядра (`kptr_restrict = 2`).
+* **Автообновления**: Фоновая служба `unattended-upgrades` для своевременных патчей безопасности.
 
 ---
 
-## 🔑 Смена пароля в 1 клик
+## ◈ Оптимизация
 
-В финале любого режима скрипт интерактивно предложит установить новый надёжный пароль для суперпользователя `root`, полностью завершая цикл первоначальной настройки.
+* **Google BBR**: Алгоритм контроля перегрузки TCP от Google — максимальная пропускная способность и низкий пинг.
+* **Буферы TCP**: Расширение окон сокетов до 16 МБ для высокоскоростных каналов.
+* **Лимиты файлов**: Поднятие системного ограничения `nofile` до 65 535 (никаких `Too many open files`).
+* **Swap & Swappiness**: Автоматическое выделение Swap с правами `600` и `swappiness = 10` (приоритет оперативной памяти).
+
+---
+
+## ◈ Смена пароля
+
+В конце любого из режимов скрипт предлагает задать новый пароль для `root`.
 
 ---
 
 # 🇬🇧 English
 
-## ✨ Overview
+## ◈ Overview
 
-**Bastion** turns a fresh Linux VPS into an impenetrable and fully optimized fortress in under 60 seconds. It pairs battle-tested Linux security standards with kernel-level performance tuning.
+**Bastion** is a minimalist automation suite that hardens and tunes a fresh Linux VPS in under a minute.
 
-Designed specifically for root environments with password authentication, brute-force mitigation, and AI-assisted hardware calibration.
-
----
-
-## 🎯 3 Operational Modes
-
-* **`[1] Automatic`** — Zero-friction instant deployment with proven, secure defaults.
-* **`[2] Manual Wizard`** — Step-by-step interactive CLI questionnaire. Press `[Enter]` to accept optimal suggestions.
-* **`[3] AI-Powered (Gemini Flash)`** — Deep telemetry scan (CPU, RAM, disk, OS) sent to Google's fastest Gemini Flash model to calculate tailored buffer sizes, swap allocations, and jail rules.
+* Root-focused workflow (preserves password authentication).
+* Minimalist terminal interface with smart Enter-defaults.
+* Kernel-level hardening & network congestion tuning.
 
 ---
 
-## 🛡️ Security Features
+## ◈ Modes
 
-* 🔐 **SSH Hardening**: MaxAuthTries 3, LoginGraceTime 30s, session keepalive checks, and port randomization support.
-* 🛑 **Fail2Ban Defense**: Intelligent brute-force isolation with customizable jail durations.
-* 🧱 **Strict UFW Rules**: Default-deny incoming policy; whitelisted SSH and optional HTTP/HTTPS traffic.
-* 🚫 **Hardened `/dev/shm`**: Mounted with `noexec,nosuid,nodev` to prevent in-memory script execution.
-* 🛡️ **DoS & SYN Mitigation**: TCP SYN cookies enabled, SYN-ACK retries pruned, ICMP broadcasts ignored.
-* 🕵️ **Anti-Spoofing & Privacy**: Reverse path filtering enabled, kernel log inspection restricted (`dmesg_restrict`).
-* 🔄 **Unattended Upgrades**: Automated background security patches straight from upstream repositories.
+| Mode | Description |
+| :--- | :--- |
+| **`[1] Automatic`** | Instant hardening using battle-tested defaults. |
+| **`[2] Manual`** | Interactive wizard. Press `[Enter]` to accept recommended values. |
+| **`[3] AI-Powered`** | Tailored calibration via **Google Gemini Flash** based on server specs. |
 
 ---
 
-## 🚀 Performance Optimizations
+## ◈ Hardening Features
 
-* ⚡ **Google BBR**: Next-gen congestion control algorithm yielding significantly higher throughput and reduced jitter.
-* 🏎️ **Dynamic TCP Buffers**: Expanded network window sizes (up to 16MB) for modern multi-gigabit connections.
-* 📂 **65,535 File Descriptors**: System-wide limits lifted for high-concurrency daemons (Docker, Nginx, databases).
-* 💾 **Smart Swappiness**: Configured to `vm.swappiness = 10` to keep application memory resident in RAM.
-
----
-
-## 📋 Compatibility
-
-* **Ubuntu**: 20.04 LTS, 22.04 LTS, 24.04 LTS
-* **Debian**: 11 (Bullseye), 12 (Bookworm)
+* **SSH**: MaxAuthTries 3, LoginGraceTime 30s, keepalive watchdog.
+* **Fail2Ban**: Dynamic jail banning brute-force attempts on the SSH port.
+* **Firewall (UFW)**: Default-deny incoming policy with isolated whitelist rules.
+* **Protected `/dev/shm`**: Mounted with `noexec,nosuid,nodev` to neutralize RAM payload execution.
+* **Kernel DoS Shield**: TCP SYN cookies, reverse path filtering, and restricted `dmesg` access.
+* **Unattended Upgrades**: Automated upstream security patches without disruption.
 
 ---
 
+## ◈ Performance Tuning
+
+* **Google BBR**: Next-generation TCP flow control yielding reduced bufferbloat and latency.
+* **Extended TCP Windows**: Up to 16MB read/write socket buffers.
+* **Resource Limits**: System-wide file descriptor ceiling raised to 65,535.
+* **Virtual Memory**: Optimized swap allocation with `vm.swappiness = 10`.
+
+---
+
+<br>
 <div align="center">
-  <p>Made with 💜 by <a href="https://github.com/laguser">laguser</a></p>
-  <sub><i>craft, don't clutter</i></sub>
+  <p>Made with 🤍 by <a href="https://github.com/laguser">laguser</a></p>
+  <sub><i>less is more</i></sub>
 </div>
