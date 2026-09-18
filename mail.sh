@@ -45,9 +45,14 @@ if [ -n "$input_port" ]; then
 fi
 
 echo ""
-echo -e "${C_CYAN}>>> [1/4] Stopping and removing old Inbucket container (purging spam)...${NC}"
+echo -e "${C_CYAN}>>> [1/4] Stopping old containers & freeing port 25...${NC}"
 docker stop inbucket 2>/dev/null || true
 docker rm inbucket 2>/dev/null || true
+
+# Free port 25 from any host mail services (postfix/exim)
+systemctl stop postfix exim4 sendmail 2>/dev/null || true
+systemctl disable postfix exim4 sendmail 2>/dev/null || true
+fuser -k 25/tcp 2>/dev/null || true
 
 echo -e "${C_CYAN}>>> [2/4] Ensuring Docker is installed and running...${NC}"
 if ! command -v docker &>/dev/null; then
