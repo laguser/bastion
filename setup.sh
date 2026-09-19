@@ -3,7 +3,7 @@
 #            BASTION — LINUX VPS HARDENING & OPTIMIZATION SUITE
 #                     Engineered with 🤍 by laguser
 #                  https://github.com/laguser/bastion
-#         Modes: [1] Automatic | [2] Manual Wizard | [3] AI (Gemini Flash)
+#         Modes: [1] Automatic (Recommended) | [2] Interactive Wizard
 # ==============================================================================
 
 set -uo pipefail
@@ -48,7 +48,6 @@ EOF
 }
 
 show_finish_banner() {
-    # Preserves screen log and previous operation messages
     echo ""
     echo -e "${C_GREEN}${C_BOLD}"
 cat << 'EOF'
@@ -137,16 +136,19 @@ clamp_uint() {
 # MODE SELECTION
 # ==============================================================================
 echo -e "${C_BOLD}Select Configuration Mode:${NC}"
-echo -e "  ${C_CYAN}[1] Automatic${NC}   — Instant deployment with battle-tested security defaults"
-echo -e "  ${C_CYAN}[2] Manual${NC}      — Step-by-step interactive questionnaire (with defaults on Enter)"
-echo -e "  ${C_CYAN}[3] AI-Powered${NC}  — Powered by Google Gemini Flash (analyzes hardware & workload)"
+echo -e "  ${C_CYAN}[1] Automatic (Recommended)${NC} — Production security profile with zero cloud dependency"
+echo -e "  ${C_CYAN}[2] Interactive Wizard${NC}     — Step-by-step custom questionnaire (SSH keys, ports, limits)"
 echo ""
 
-prompt SETUP_MODE "Choose mode (1, 2, or 3)" "1"
+prompt SETUP_MODE "Choose mode (1 or 2)" "1"
 
 # Default Variables
 SSH_PORT="22"
 SSH_TIMEOUT="300"
+PERMIT_ROOT_LOGIN="yes"
+PASSWORD_AUTH="yes"
+ALLOW_TCP_FORWARDING="no"
+SSH_PUBKEY=""
 OPEN_WEB="y"
 EXTRA_PORTS=""
 F2B_MAXRETRY="3"
@@ -170,20 +172,46 @@ fi
 # MODE LOGIC
 # ==============================================================================
 
-if [ "$SETUP_MODE" = "2" ] || [ "$SETUP_MODE" = "manual" ]; then
-    # ---------------- MANUAL MODE ----------------
+if [ "$SETUP_MODE" = "2" ] || [ "$SETUP_MODE" = "wizard" ] || [ "$SETUP_MODE" = "manual" ]; then
+    # ---------------- INTERACTIVE WIZARD MODE ----------------
     echo ""
-    echo -e "${C_MAGENTA}${C_BOLD}┌──[ 1. SSH CONFIGURATION ]${NC}"
+    echo -e "${C_MAGENTA}${C_BOLD}┌──[ 1. SSH CONFIGURATION & AUTHENTICATION ]${NC}"
     prompt SSH_PORT "SSH Port (Changing from 22 reduces automated scanning noise)" "22"
     SSH_PORT=$(clamp_uint "$SSH_PORT" 1 65535 22)
 
     prompt SSH_TIMEOUT "Disconnect idle sessions after how many seconds?" "300"
     SSH_TIMEOUT=$(clamp_uint "$SSH_TIMEOUT" 30 86400 300)
 
+    prompt ADD_SSH_KEY "Would you like to install an SSH Public Key for root login? (y/n)" "n"
+    if [[ "$ADD_SSH_KEY" =~ ^[Yy]$ ]]; then
+        prompt SSH_PUBKEY "Paste your SSH Public Key (e.g. ssh-ed25519 AAAAC3... user@domain)" ""
+        if [ -n "$SSH_PUBKEY" ]; then
+            mkdir -p /root/.ssh
+            chmod 700 /root/.ssh
+            echo "$SSH_PUBKEY" >> /root/.ssh/authorized_keys
+            chmod 600 /root/.ssh/authorized_keys
+            echo -e "${C_GREEN}[✓] SSH key added to /root/.ssh/authorized_keys.${NC}"
+            
+            prompt DISABLE_PASS "Disable SSH password login and enforce SSH Key authentication? (y/n)" "n"
+            if [[ "$DISABLE_PASS" =~ ^[Yy]$ ]]; then
+                PASSWORD_AUTH="no"
+                PERMIT_ROOT_LOGIN="prohibit-password"
+                echo -e "${C_GREEN}[✓] Password authentication will be disabled (Key only).${NC}"
+            fi
+        fi
+    fi
+
+    prompt ALLOW_TCP_FWD "Allow SSH TCP forwarding (required for SSH tunnels / SOCKS)? (y/n)" "n"
+    if [[ "$ALLOW_TCP_FWD" =~ ^[Yy]$ ]]; then
+        ALLOW_TCP_FORWARDING="yes"
+    else
+        ALLOW_TCP_FORWARDING="no"
+    fi
+
     echo ""
     echo -e "${C_MAGENTA}${C_BOLD}┌──[ 2. FIREWALL (UFW) & PORTS ]${NC}"
     prompt OPEN_WEB "Allow incoming HTTP (80) & HTTPS (443) web ports? (y/n)" "y"
-    prompt EXTRA_PORTS "Open any additional custom ports? (e.g. 51820/udp, 3000 or Enter to skip)" ""
+    prompt EXTRA_PORTS "Open any additional custom ports? (e.g. 51820/udp, 8080 or Enter to skip)" ""
 
     echo ""
     echo -e "${C_MAGENTA}${C_BOLD}┌──[ 3. FAIL2BAN BRUTE-FORCE SHIELD ]${NC}"
@@ -198,7 +226,7 @@ if [ "$SETUP_MODE" = "2" ] || [ "$SETUP_MODE" = "manual" ]; then
 
     echo ""
     echo -e "${C_MAGENTA}${C_BOLD}┌──[ 4. MEMORY & STORAGE TUNING ]${NC}"
-    prompt SWAP_SIZE_GB "Swap file size in Gigabytes (0 to skip)" "2"
+    prompt SWAP_SIZE_GB "Swap file size in Gigabytes (0 to skip)" "$SWAP_SIZE_GB"
     SWAP_SIZE_GB=$(clamp_uint "$SWAP_SIZE_GB" 0 64 2)
 
     prompt SWAPPINESS "Kernel Swappiness ratio 0-100 (10 = preserve RAM first)" "10"
@@ -209,108 +237,12 @@ if [ "$SETUP_MODE" = "2" ] || [ "$SETUP_MODE" = "manual" ]; then
     echo ""
     echo -e "${C_MAGENTA}${C_BOLD}┌──[ 5. KERNEL HARDENING & OPTIMIZATION ]${NC}"
     prompt ENABLE_BBR "Enable Google BBR Congestion Control (Faster network)? (y/n)" "y"
-    prompt HARDEN_SYSCTL "Apply kernel security shield (SYN-Flood cookies, anti-spoof)? (y/n)" "y"
+    prompt HARDEN_SYSCTL "Apply kernel security shield (SYN-Flood cookies, anti-spoof)? (y/n)" "$HARDEN_SYSCTL"
     prompt ENABLE_AUTO_UPDATES "Enable automatic background security updates? (y/n)" "y"
 
-elif [ "$SETUP_MODE" = "3" ] || [ "$SETUP_MODE" = "ai" ]; then
-    # ---------------- AI-POWERED MODE (GEMINI FLASH) ----------------
-    echo ""
-    echo -e "${C_MAGENTA}${C_BOLD}┌──[ AI OPTIMIZATION (GOOGLE GEMINI FLASH) ]${NC}"
-    prompt_secret GEMINI_KEY "Enter your Google AI Studio Gemini API Key"
-    
-    if [ -z "$GEMINI_KEY" ]; then
-        echo -e "${C_RED}[!] API key cannot be empty. Falling back to Automatic mode.${NC}"
-    else
-        prompt WORKLOAD_DESC "What is the primary workload of this server? (e.g., Docker, Web, VPN, Mail, General)" "Web Server & General Docker"
-        echo -e "${C_BLUE}>>> Gathering server hardware and environment telemetry...${NC}"
-        
-        TOTAL_RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
-        CPU_CORES=$(nproc)
-        CPU_MODEL=$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^[ \t]*//')
-        DISK_AVAIL_GB=$(df -BG / 2>/dev/null | awk 'NR==2 {print $4}' | tr -d 'G')
-        OS_DESC=$(grep -E '^(PRETTY_NAME)=' /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"')
-
-        echo -e "    OS:       ${C_CYAN}${OS_DESC}${NC}"
-        echo -e "    CPU:      ${C_CYAN}${CPU_CORES} Cores (${CPU_MODEL})${NC}"
-        echo -e "    RAM:      ${C_CYAN}${TOTAL_RAM_MB} MB${NC}"
-        echo -e "    Disk Free:${C_CYAN}${DISK_AVAIL_GB} GB${NC}"
-        echo -e "${C_BLUE}>>> Contacting Gemini Flash model for tailored optimization...${NC}"
-
-        PROMPT_TEXT="You are an expert Linux Systems and Security Engineer. Analyze this server hardware and workload, and provide optimal configuration parameters in strict JSON format.
-Server Telemetry:
-- OS: $OS_DESC
-- CPU Cores: $CPU_CORES ($CPU_MODEL)
-- Total RAM: $TOTAL_RAM_MB MB
-- Disk Free: $DISK_AVAIL_GB GB
-- Workload: $WORKLOAD_DESC
-
-Respond ONLY with valid JSON having these exact keys:
-{
-  \"ssh_port\": 22,
-  \"swap_size_gb\": 2,
-  \"swappiness\": 10,
-  \"open_web\": true,
-  \"enable_bbr\": true,
-  \"f2b_maxretry\": 3,
-  \"f2b_bantime\": 7200,
-  \"ai_reasoning\": \"brief 2-sentence summary of recommendations\"
-}"
-
-        AI_PAYLOAD=$(python3 -c "
-import json, sys
-prompt_content = sys.stdin.read()
-payload = {
-    'contents': [{'parts': [{'text': prompt_content}]}],
-    'generationConfig': {'response_mime_type': 'application/json'}
-}
-print(json.dumps(payload))
-" <<< "$PROMPT_TEXT" 2>/dev/null || true)
-
-        # Pass API key via x-goog-api-key header (prevents leaking in /proc command line)
-        AI_RAW_RESP=$(echo "$AI_PAYLOAD" | curl -s --max-time 15 -X POST \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" \
-            -H "Content-Type: application/json" \
-            -H "x-goog-api-key: ${GEMINI_KEY}" \
-            --data-binary @- 2>/dev/null || true)
-
-        # Safely parse JSON via stdin to bash env variables without pipe-delimiter flaws
-        AI_ENV=$(echo "$AI_RAW_RESP" | python3 -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    text = data['candidates'][0]['content']['parts'][0]['text']
-    conf = json.loads(text)
-    print(f\"AI_SSH={conf.get('ssh_port', 22)}\")
-    print(f\"AI_SWAP={conf.get('swap_size_gb', 2)}\")
-    print(f\"AI_SWAPPINESS={conf.get('swappiness', 10)}\")
-    print(f\"AI_WEB={'y' if conf.get('open_web', True) else 'n'}\")
-    print(f\"AI_BBR={'y' if conf.get('enable_bbr', True) else 'n'}\")
-    print(f\"AI_RETRY={conf.get('f2b_maxretry', 3)}\")
-    print(f\"AI_BAN={conf.get('f2b_bantime', 7200)}\")
-    clean_reason = str(conf.get('ai_reasoning', 'Optimized for current hardware')).replace('\"', '\\\"').replace('$', '\\$')
-    print(f'AI_REASON=\"{clean_reason}\"')
-except Exception:
-    sys.exit(1)
-" 2>/dev/null || true)
-
-        if [ -n "$AI_ENV" ]; then
-            eval "$AI_ENV"
-            SSH_PORT=$(clamp_uint "${AI_SSH:-22}" 1 65535 22)
-            SWAP_SIZE_GB=$(clamp_uint "${AI_SWAP:-2}" 0 64 2)
-            SWAPPINESS=$(clamp_uint "${AI_SWAPPINESS:-10}" 0 100 10)
-            OPEN_WEB="${AI_WEB:-y}"
-            ENABLE_BBR="${AI_BBR:-y}"
-            F2B_MAXRETRY=$(clamp_uint "${AI_RETRY:-3}" 1 50 3)
-            F2B_BANTIME=$(clamp_uint "${AI_BAN:-7200}" 60 31536000 7200)
-            
-            echo -e "${C_GREEN}[✓] Gemini Flash Analysis Successful!${NC}"
-            echo -e "${C_CYAN}AI Reasoning: ${NC}${AI_REASON}\n"
-        else
-            echo -e "${C_YELLOW}[!] Could not parse Gemini response (Invalid API Key or Rate Limit). Using optimal defaults.${NC}"
-        fi
-    fi
 else
-    echo -e "${C_GREEN}>>> Automatic Mode selected. Applying default hardening profile.${NC}"
+    # ---------------- AUTOMATIC MODE ----------------
+    echo -e "${C_GREEN}>>> Automatic Mode selected. Applying standard production hardening profile.${NC}"
 fi
 
 # Multi-Protocol Listening Port Auto-Detection (TCP & UDP)
@@ -353,12 +285,20 @@ SWAPPINESS=$(clamp_uint "$SWAPPINESS" 0 100 10)
 # ==============================================================================
 # CONFIGURATION SUMMARY BOX
 # ==============================================================================
+AUTH_DESC="Password Authentication"
+if [ "$PASSWORD_AUTH" = "no" ]; then
+    AUTH_DESC="SSH Key Authentication Only"
+elif [ -f /root/.ssh/authorized_keys ] && grep -qvE '^\s*(#|$)' /root/.ssh/authorized_keys 2>/dev/null; then
+    AUTH_DESC="Password + SSH Key"
+fi
+
 echo -e "${C_CYAN}${C_BOLD}┌────────────────── CONFIGURATION SUMMARY ──────────────────┐${NC}"
-printf "│ %-30s : %-25s │\n" "Account" "root (Password Auth)"
+printf "│ %-30s : %-25s │\n" "Root Auth Method" "$AUTH_DESC"
 printf "│ %-30s : %-25s │\n" "SSH Port" "$SSH_PORT"
 printf "│ %-30s : %-25s │\n" "Idle Session Timeout" "${SSH_TIMEOUT}s"
+printf "│ %-30s : %-25s │\n" "SSH TCP Forwarding" "$ALLOW_TCP_FORWARDING"
 printf "│ %-30s : %-25s │\n" "Web Ports (80/443)" "$OPEN_WEB"
-printf "│ %-30s : %-25s │\n" "Extra Ports" "$([ -n "$EXTRA_PORTS" ] && echo "$EXTRA_PORTS" || echo "None")"
+printf "│ %-30s : %-25s │\n" "Extra Service Ports" "$([ -n "$EXTRA_PORTS" ] && echo "$EXTRA_PORTS" || echo "None")"
 printf "│ %-30s : %-25s │\n" "Fail2Ban Policy" "$F2B_MAXRETRY tries / ${F2B_BANTIME}s ban"
 printf "│ %-30s : %-25s │\n" "Swap Allocation" "${SWAP_SIZE_GB} GB (Swappiness: $SWAPPINESS)"
 printf "│ %-30s : %-25s │\n" "Secure /dev/shm" "$HARDEN_DEV_SHM"
@@ -423,26 +363,27 @@ if [ "$SWAP_SIZE_GB" -gt 0 ]; then
     fi
 fi
 
-echo -e "${C_BLUE}>>> [4/8] Applying Kernel Hardening & TCP Acceleration (sysctl)...${NC}"
+echo -e "${C_BLUE}>>> [4/8] Configuring Google TCP BBR & Kernel Hardening (sysctl)...${NC}"
 
-BBR_SUPPORTED=0
+# Independent BBR Acceleration (separate from host kernel sysctl shield)
 if [[ "$ENABLE_BBR" =~ ^[Yy]$ ]]; then
     modprobe tcp_bbr 2>/dev/null || true
     if sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -q bbr; then
-        BBR_SUPPORTED=1
+        cat << 'EOF' > /etc/sysctl.d/98-bbr.conf
+# Google BBR Congestion Control (by laguser)
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+EOF
+        sysctl -p /etc/sysctl.d/98-bbr.conf >/dev/null 2>&1 || true
+        echo -e "${C_GREEN}  -> Google TCP BBR enabled.${NC}"
     else
         echo -e "${C_YELLOW}  -> Kernel does not support BBR. Retaining default congestion control.${NC}"
     fi
 fi
 
+# Kernel Security Shield
 if [[ "$HARDEN_SYSCTL" =~ ^[Yy]$ ]]; then
 cat << EOF > /etc/sysctl.d/99-server-hardening.conf
-# ==============================================================================
-# Google BBR TCP Congestion Control
-# ==============================================================================
-$([ "$BBR_SUPPORTED" -eq 1 ] && echo "net.core.default_qdisc = fq" || true)
-$([ "$BBR_SUPPORTED" -eq 1 ] && echo "net.ipv4.tcp_congestion_control = bbr" || true)
-
 # ==============================================================================
 # SYN-Flood & Denial of Service Protection
 # ==============================================================================
@@ -491,8 +432,8 @@ vm.swappiness = $SWAPPINESS
 vm.vfs_cache_pressure = 50
 EOF
 
-sysctl --system || true
-echo -e "${C_GREEN}  -> Sysctl configuration reloaded.${NC}"
+    sysctl --system >/dev/null 2>&1 || true
+    echo -e "${C_GREEN}  -> Sysctl security configuration applied.${NC}"
 fi
 
 echo -e "${C_BLUE}>>> [5/8] Securing Shared Memory (/dev/shm)...${NC}"
@@ -515,9 +456,9 @@ grep -q "DefaultLimitNOFILE=65535" /etc/systemd/system.conf 2>/dev/null || echo 
 
 echo -e "${C_BLUE}>>> [7/8] Hardening OpenSSH & Configuring Fail2Ban...${NC}"
 
-# Ensure /etc/ssh/sshd_config includes drop-in directory
+# Strictly check Include directive using regex anchor to avoid matching comments (#Include)
 if [ -f /etc/ssh/sshd_config ]; then
-    if ! grep -q "Include /etc/ssh/sshd_config.d/\*.conf" /etc/ssh/sshd_config 2>/dev/null; then
+    if ! grep -Eq '^\s*Include\s+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config 2>/dev/null; then
         sed -i '1s|^|Include /etc/ssh/sshd_config.d/*.conf\n|' /etc/ssh/sshd_config
     fi
 fi
@@ -528,17 +469,24 @@ SSH_HARDEN_CONF="/etc/ssh/sshd_config.d/00-bastion.conf"
 cat << EOF > "$SSH_HARDEN_CONF"
 # Bastion Hardened OpenSSH Configuration (by laguser)
 Port $SSH_PORT
-PermitRootLogin yes
-PasswordAuthentication yes
+PermitRootLogin $PERMIT_ROOT_LOGIN
+PasswordAuthentication $PASSWORD_AUTH
+PubkeyAuthentication yes
 LoginGraceTime 30
 MaxAuthTries 3
 PermitEmptyPasswords no
 X11Forwarding no
+AllowTcpForwarding $ALLOW_TCP_FORWARDING
 AllowAgentForwarding no
 LogLevel VERBOSE
 MaxStartups 10:30:60
 ClientAliveInterval $SSH_TIMEOUT
 ClientAliveCountMax 2
+
+# Modern Cryptography (Strict Key Exchange, Ciphers, and MACs)
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
 EOF
 
 # Handle systemd socket activation ONLY when ssh.socket is explicitly enabled
@@ -638,12 +586,31 @@ ufw --force enable >/dev/null 2>&1
 echo -e "${C_GREEN}  -> UFW firewall enabled with rate-limited SSH protection.${NC}"
 
 if [[ "$ENABLE_AUTO_UPDATES" =~ ^[Yy]$ ]]; then
+    cat << 'EOF' > /etc/apt/apt.conf.d/50unattended-upgrades
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+Unattended-Upgrade::Package-Blacklist {
+};
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+Unattended-Upgrade::MinimalSteps "true";
+Unattended-Upgrade::InstallOnShutdown "false";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Automatic-Reboot-Time "04:00";
+EOF
+
     cat << 'EOF' > /etc/apt/apt.conf.d/20auto-upgrades
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
 EOF
     systemctl enable unattended-upgrades --now >/dev/null 2>&1 || true
-    echo -e "${C_GREEN}  -> Background security updates active.${NC}"
+    echo -e "${C_GREEN}  -> Background security updates active (50unattended-upgrades configured).${NC}"
 fi
 
 # ==============================================================================
@@ -666,14 +633,14 @@ fi
 # ==============================================================================
 show_finish_banner
 echo -e "${C_CYAN}  Target User:       ${C_WHITE}root${NC}"
-echo -e "  Auth Method:       ${C_WHITE}Password Authentication${NC}"
+echo -e "  Auth Method:       ${C_WHITE}${AUTH_DESC}${NC}"
 echo -e "  SSH Port:          ${C_WHITE}${SSH_PORT}${NC}"
 if [ "$SSH_VERIFIED" -eq 1 ]; then
     echo -e "  SSH Status:        ${C_GREEN}[✔] Actively listening on port ${SSH_PORT}${NC}"
 else
     echo -e "  SSH Status:        ${C_RED}[!] Not responding on port ${SSH_PORT} — Connect via fallback port 22!${NC}"
 fi
-echo -e "  TCP BBR:           ${C_GREEN}$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'active')${NC}"
+echo -e "  Google TCP BBR:    ${C_GREEN}$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'active')${NC}"
 echo -e "  Firewall:          ${C_GREEN}$(ufw status 2>/dev/null | grep Status || echo 'Status: active')${NC}"
 echo -e "  Install Log:       ${C_GRAY}/var/log/bastion.log${NC}"
 echo -e "  Config Backups:    ${C_GRAY}${BACKUP_DIR}${NC}"
