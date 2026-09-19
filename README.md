@@ -58,22 +58,26 @@ bash <(curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh
 
 ## ◈ Безопасность
 
-* **OpenSSH**: Ограничение попыток входа (`MaxAuthTries 3`), тайм-аут ожидания 30с (`LoginGraceTime 30`), отключение X11.
-* **Fail2Ban**: Автоматический бан IP-адресов при попытках подбора пароля по SSH.
-* **UFW**: Закрыты все входящие порты, кроме SSH и опционально веб (80/443).
-* **Защита `/dev/shm`**: Монтирование с флагами `noexec,nosuid,nodev` против исполнения скриптов из памяти.
-* **Ядро (DoS Shield)**: Криптографические `tcp_syncookies`, защита от спуфинга (`rp_filter`), игнорирование ICMP Broadcast.
-* **Права ядра**: Ограничение доступа к `dmesg` и адресам ядра (`kptr_restrict = 2`).
+* **OpenSSH Hardening**: Приоритетный drop-in (`00-bastion.conf`), `MaxAuthTries 3`, `LoginGraceTime 30`, `LogLevel VERBOSE`, `MaxStartups 10:30:60`, отключение X11.
+* **Lockout Protection**: Проверка фактического прослушивания порта через `ss` перед отключением резервного доступа, аварийный порт 22 с rate-limit.
+* **Fail2Ban (systemd-native)**: Анализ системного журнала напрямую через `python3-systemd`, авто-вайтлист текущего IP администратора (`ignoreip`).
+* **UFW Firewall & Multi-Protocol Auto-Detect**: Интеллектуальное сканирование активных TCP/UDP сервисов (WireGuard, OpenVPN, Mail, Docker) с сохранением доступа и автоматическим бэкапом правил в `/var/backups/bastion/`.
+* **Защита `/dev/shm`**: Монтирование с флагами `noexec,nosuid,nodev` против исполнения скриптов и полезных нагрузок из shared memory.
+* **Ядро (DoS Shield)**: Криптографические `tcp_syncookies`, защита от TIME-WAIT атак (`tcp_rfc1337 = 1`), фильтрация обратного пути (`rp_filter`), защита от спуфинга и ICMP Broadcast.
+* **Безопасность IPv6**: Полная блокировка Router Advertisements (`accept_ra = 0`) и ICMP redirects.
+* **Права ядра & Память**: Ограничение доступа к `dmesg`, адресам ядра (`kptr_restrict = 2`), защита трассировки процессов (`kernel.yama.ptrace_scope = 1`).
+* **Аварийный откат**: Автоматическое резервное копирование `sshd_config`, `fstab`, `system.conf` и `ufw` перед любыми модификациями.
 * **Автообновления**: Фоновая служба `unattended-upgrades` для своевременных патчей безопасности.
 
 ---
 
 ## ◈ Оптимизация
 
-* **Google BBR**: Алгоритм контроля перегрузки TCP от Google — максимальная пропускная способность и низкий пинг.
-* **Буферы TCP**: Расширение окон сокетов до 16 МБ для высокоскоростных каналов.
+* **Google BBR**: Алгоритм контроля перегрузки TCP от Google — максимальная пропускная способность и минимальный пинг.
+* **Буферы TCP**: Расширение окон сокетов до 16 МБ для высокоскоростных гигабитных каналов.
 * **Лимиты файлов**: Поднятие системного ограничения `nofile` до 65 535 (никаких `Too many open files`).
-* **Swap & Swappiness**: Автоматическое выделение Swap с правами `600` и `swappiness = 10` (приоритет оперативной памяти).
+* **Swap & Filesystem Check**: Интеллектуальное выделение Swap с проверкой свободного места на диске, флагом `nofail` в `/etc/fstab` и приоритетом RAM (`swappiness = 10`).
+* **Детект виртуализации**: Автоматическое отключение тюнинга хостового ядра и swap внутри легковесных контейнеров (LXC/OpenVZ).
 
 ---
 
@@ -107,11 +111,13 @@ bash <(curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh
 
 ## ◈ Hardening Features
 
-* **SSH**: MaxAuthTries 3, LoginGraceTime 30s, keepalive watchdog.
-* **Fail2Ban**: Dynamic jail banning brute-force attempts on the SSH port.
-* **Firewall (UFW)**: Default-deny incoming policy with isolated whitelist rules.
+* **OpenSSH Hardening**: Highest priority drop-in (`00-bastion.conf`), `MaxAuthTries 3`, `LoginGraceTime 30s`, `LogLevel VERBOSE`, `MaxStartups 10:30:60`, keepalive watchdog.
+* **Lockout Protection**: Verifies socket binding before dropping fallbacks; maintains emergency rate-limited port 22 access.
+* **Fail2Ban (systemd-native)**: Native journal stream via `python3-systemd`, dynamic whitelist for active SSH client IP (`ignoreip`).
+* **Firewall (UFW) & Auto-Detect**: Intelligent multi-protocol (TCP & UDP) detection of running workloads (WireGuard, OpenVPN, Mail, Docker) with automated backup to `/var/backups/bastion/`.
 * **Protected `/dev/shm`**: Mounted with `noexec,nosuid,nodev` to neutralize RAM payload execution.
-* **Kernel DoS Shield**: TCP SYN cookies, reverse path filtering, and restricted `dmesg` access.
+* **Kernel DoS Shield**: TCP SYN cookies, RFC 1337 TIME-WAIT assassination protection, reverse path filtering, IPv6 RA rejection, and restricted `dmesg`/ptrace access.
+* **Container Aware**: Automatically adapts configuration if running inside LXC or OpenVZ environments.
 * **Unattended Upgrades**: Automated upstream security patches without disruption.
 
 ---
@@ -119,14 +125,14 @@ bash <(curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh
 ## ◈ Performance Tuning
 
 * **Google BBR**: Next-generation TCP flow control yielding reduced bufferbloat and latency.
-* **Extended TCP Windows**: Up to 16MB read/write socket buffers.
+* **Extended TCP Windows**: Up to 16MB read/write socket buffers for gigabit bandwidth.
 * **Resource Limits**: System-wide file descriptor ceiling raised to 65,535.
-* **Virtual Memory**: Optimized swap allocation with `vm.swappiness = 10`.
+* **Virtual Memory**: Safe swap allocation with disk bounds, `nofail` flag, and `vm.swappiness = 10`.
 
 ---
 
 <br>
 <div align="center">
-  <p>Made with 🤍 by <a href="https://github.com/laguser">laguser</a></p>
-  <sub><i>less is more</i></sub>
+  <p>Engineered with 🤍 by <a href="https://github.com/laguser">laguser</a></p>
+  <sub><i>Security by design · Performance by default</i></sub>
 </div>
