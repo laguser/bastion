@@ -4,19 +4,6 @@
 #                     Engineered with 🤍 by laguser
 #                  https://github.com/laguser/bastion
 #         Modes: [1] Automatic (Recommended) | [2] Interactive Wizard
-#
-#   Patched by Axiom:
-#   - SSH pubkey format is validated at collection time, before anything
-#     is written to disk.
-#   - Writing to /root/.ssh/authorized_keys happens ONLY inside the
-#     EXECUTION phase, after CONFIRM — a "n" at the summary now truly
-#     aborts with zero side effects.
-#   - Password auth is NEVER disabled in the same run that installs the
-#     key. The server has no way to test the client's private key, so
-#     "verify then disable" can't happen automatically. Instead: the key
-#     is installed, PasswordAuthentication stays "yes", and a helper
-#     script is dropped for the operator to run themselves once they've
-#     confirmed key-based login works from a second session.
 # ==============================================================================
 
 set -uo pipefail
@@ -145,12 +132,6 @@ clamp_uint() {
     fi
 }
 
-# Validate an OpenSSH public key line by format only (no filesystem touch)
-is_valid_pubkey() {
-    local key="$1"
-    [[ "$key" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)\ [A-Za-z0-9+/]+=*(\ .*)?$ ]]
-}
-
 # ==============================================================================
 # MODE SELECTION
 # ==============================================================================
@@ -164,9 +145,10 @@ prompt SETUP_MODE "Choose mode (1 or 2)" "1"
 # Default Variables
 SSH_PORT="22"
 SSH_TIMEOUT="300"
+PERMIT_ROOT_LOGIN="yes"
+PASSWORD_AUTH="yes"
 ALLOW_TCP_FORWARDING="no"
 SSH_PUBKEY=""
-DISABLE_PASS="n"
 OPEN_WEB="y"
 EXTRA_PORTS=""
 F2B_MAXRETRY="3"
@@ -187,7 +169,7 @@ if command -v systemd-detect-virt &>/dev/null && systemd-detect-virt -c &>/dev/n
 fi
 
 # ==============================================================================
-# MODE LOGIC — collection only. Nothing here touches the filesystem.
+# MODE LOGIC
 # ==============================================================================
 
 if [ "$SETUP_MODE" = "2" ] || [ "$SETUP_MODE" = "wizard" ] || [ "$SETUP_MODE" = "manual" ]; then
@@ -203,20 +185,19 @@ if [ "$SETUP_MODE" = "2" ] || [ "$SETUP_MODE" = "wizard" ] || [ "$SETUP_MODE" = 
     prompt ADD_SSH_KEY "Would you like to install an SSH Public Key for root login? (y/n)" "n"
     if [[ "$ADD_SSH_KEY" =~ ^[Yy]$ ]]; then
         prompt SSH_PUBKEY "Paste your SSH Public Key (e.g. ssh-ed25519 AAAAC3... user@domain)" ""
-        if [ -n "$SSH_PUBKEY" ] && is_valid_pubkey "$SSH_PUBKEY"; then
-            echo -e "${C_GREEN}[✓] Key format looks valid — it will be installed during the EXECUTION phase, after confirmation.${NC}"
-
-            prompt DISABLE_PASS "After the key is confirmed working, disable SSH password login? (y/n)" "n"
+        if [ -n "$SSH_PUBKEY" ]; then
+            mkdir -p /root/.ssh
+            chmod 700 /root/.ssh
+            echo "$SSH_PUBKEY" >> /root/.ssh/authorized_keys
+            chmod 600 /root/.ssh/authorized_keys
+            echo -e "${C_GREEN}[✓] SSH key added to /root/.ssh/authorized_keys.${NC}"
+            
+            prompt DISABLE_PASS "Disable SSH password login and enforce SSH Key authentication? (y/n)" "n"
             if [[ "$DISABLE_PASS" =~ ^[Yy]$ ]]; then
-                echo -e "${C_YELLOW}[i] Password auth will NOT be disabled in this run. This box can't test your private key —${NC}"
-                echo -e "${C_YELLOW}    only your local machine has it. A helper script will be created instead; run it${NC}"
-                echo -e "${C_YELLOW}    yourself once you've confirmed key login works from a NEW terminal.${NC}"
+                PASSWORD_AUTH="no"
+                PERMIT_ROOT_LOGIN="prohibit-password"
+                echo -e "${C_GREEN}[✓] Password authentication will be disabled (Key only).${NC}"
             fi
-        else
-            echo -e "${C_RED}[!] Key format looks invalid (expected 'ssh-ed25519 AAAA...' / 'ssh-rsa AAAA...' / etc).${NC}"
-            echo -e "${C_RED}    Skipping key installation. Password authentication remains enabled.${NC}"
-            SSH_PUBKEY=""
-            DISABLE_PASS="n"
         fi
     fi
 
@@ -302,15 +283,13 @@ SWAP_SIZE_GB=$(clamp_uint "$SWAP_SIZE_GB" 0 64 2)
 SWAPPINESS=$(clamp_uint "$SWAPPINESS" 0 100 10)
 
 # ==============================================================================
-# CONFIGURATION SUMMARY BOX — read-only, no filesystem state has been touched yet
+# CONFIGURATION SUMMARY BOX
 # ==============================================================================
 AUTH_DESC="Password Authentication"
-if [ -n "$SSH_PUBKEY" ]; then
-    if [[ "$DISABLE_PASS" =~ ^[Yy]$ ]]; then
-        AUTH_DESC="Password + SSH Key (key-only after manual confirmation step)"
-    else
-        AUTH_DESC="Password + SSH Key"
-    fi
+if [ "$PASSWORD_AUTH" = "no" ]; then
+    AUTH_DESC="SSH Key Authentication Only"
+elif [ -f /root/.ssh/authorized_keys ] && grep -qvE '^\s*(#|$)' /root/.ssh/authorized_keys 2>/dev/null; then
+    AUTH_DESC="Password + SSH Key"
 fi
 
 echo -e "${C_CYAN}${C_BOLD}┌────────────────── CONFIGURATION SUMMARY ──────────────────┐${NC}"
@@ -330,12 +309,12 @@ echo -e "${C_CYAN}${C_BOLD}└────────────────�
 
 prompt CONFIRM "Apply configuration now? (y/n)" "n"
 if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-    echo -e "${C_RED}[!] Installation aborted by user. No files were modified.${NC}"
+    echo -e "${C_RED}[!] Installation aborted by user.${NC}"
     exit 0
 fi
 
 # ==============================================================================
-# EXECUTION — every mutation happens from here down, and only from here down.
+# EXECUTION
 # ==============================================================================
 
 # Create backups of critical files prior to mutation
@@ -477,20 +456,6 @@ grep -q "DefaultLimitNOFILE=65535" /etc/systemd/system.conf 2>/dev/null || echo 
 
 echo -e "${C_BLUE}>>> [7/8] Hardening OpenSSH & Configuring Fail2Ban...${NC}"
 
-# --- Install SSH public key (validated at collection time, written here) ---
-KEY_INSTALLED=0
-if [ -n "$SSH_PUBKEY" ] && is_valid_pubkey "$SSH_PUBKEY"; then
-    mkdir -p /root/.ssh
-    chmod 700 /root/.ssh
-    touch /root/.ssh/authorized_keys
-    chmod 600 /root/.ssh/authorized_keys
-    if ! grep -qxF "$SSH_PUBKEY" /root/.ssh/authorized_keys 2>/dev/null; then
-        echo "$SSH_PUBKEY" >> /root/.ssh/authorized_keys
-    fi
-    KEY_INSTALLED=1
-    echo -e "${C_GREEN}  -> SSH public key installed to /root/.ssh/authorized_keys.${NC}"
-fi
-
 # Strictly check Include directive using regex anchor to avoid matching comments (#Include)
 if [ -f /etc/ssh/sshd_config ]; then
     if ! grep -Eq '^\s*Include\s+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config 2>/dev/null; then
@@ -501,15 +466,11 @@ fi
 mkdir -p /etc/ssh/sshd_config.d/
 SSH_HARDEN_CONF="/etc/ssh/sshd_config.d/00-bastion.conf"
 
-# Password auth ALWAYS stays enabled on this run, even if a key was installed
-# and the operator asked to disable it. See the header note: the private key
-# never touches this box, so this box cannot verify it works. A helper script
-# is dropped below instead.
 cat << EOF > "$SSH_HARDEN_CONF"
 # Bastion Hardened OpenSSH Configuration (by laguser)
 Port $SSH_PORT
-PermitRootLogin yes
-PasswordAuthentication yes
+PermitRootLogin $PERMIT_ROOT_LOGIN
+PasswordAuthentication $PASSWORD_AUTH
 PubkeyAuthentication yes
 LoginGraceTime 30
 MaxAuthTries 3
@@ -557,38 +518,6 @@ if command -v ss &>/dev/null && ss -tlnH "sport = :$SSH_PORT" 2>/dev/null | grep
     echo -e "${C_GREEN}  -> [✓] Verified: SSH actively listening on port $SSH_PORT.${NC}"
 else
     echo -e "${C_YELLOW}  -> [!] Note: SSH is not responding on port $SSH_PORT. Fallback port 22 maintained.${NC}"
-fi
-
-# --- Deferred password-auth disable: dropped only if a key was installed ---
-DISABLE_HELPER="/root/bastion-disable-password-auth.sh"
-if [ "$KEY_INSTALLED" -eq 1 ] && [[ "$DISABLE_PASS" =~ ^[Yy]$ ]]; then
-    cat << HELPEREOF > "$DISABLE_HELPER"
-#!/usr/bin/env bash
-# Generated by Bastion. Run this ONLY after confirming, from a SEPARATE
-# terminal, that key-based login works:
-#   ssh -p $SSH_PORT root@<this-server-ip>
-# If that works without a password prompt, run this script to lock the
-# door behind you. If it does NOT work, do not run this — fix the key
-# first, or you will lose password access with no key fallback.
-set -euo pipefail
-if [ "\$EUID" -ne 0 ]; then echo "Run as root."; exit 1; fi
-CONF="$SSH_HARDEN_CONF"
-if [ ! -f "\$CONF" ]; then echo "Bastion SSH config not found at \$CONF"; exit 1; fi
-sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' "\$CONF"
-sed -i 's/^PermitRootLogin yes/PermitRootLogin prohibit-password/' "\$CONF"
-if sshd -t; then
-    systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null
-    echo "Password authentication disabled. Key-only login is now enforced."
-else
-    echo "sshd config check failed — reverting, nothing was changed."
-    sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' "\$CONF"
-    sed -i 's/^PermitRootLogin prohibit-password/PermitRootLogin yes/' "\$CONF"
-    exit 1
-fi
-HELPEREOF
-    chmod 700 "$DISABLE_HELPER"
-    echo -e "${C_YELLOW}  -> Key installed. Password auth left ENABLED this run.${NC}"
-    echo -e "${C_YELLOW}     Verify key login from a new terminal, then run: ${C_CYAN}$DISABLE_HELPER${NC}"
 fi
 
 # Fail2ban configuration: Use systemd backend & safe ignoreip & monitor active + fallback port
@@ -715,9 +644,6 @@ echo -e "  Google TCP BBR:    ${C_GREEN}$(sysctl -n net.ipv4.tcp_congestion_cont
 echo -e "  Firewall:          ${C_GREEN}$(ufw status 2>/dev/null | grep Status || echo 'Status: active')${NC}"
 echo -e "  Install Log:       ${C_GRAY}/var/log/bastion.log${NC}"
 echo -e "  Config Backups:    ${C_GRAY}${BACKUP_DIR}${NC}"
-if [ "$KEY_INSTALLED" -eq 1 ] && [[ "$DISABLE_PASS" =~ ^[Yy]$ ]]; then
-    echo -e "  Password Disable:  ${C_YELLOW}Deferred — run ${DISABLE_HELPER} after verifying key login${NC}"
-fi
 echo ""
 
 if [ "$SSH_PORT" -ne 22 ]; then
