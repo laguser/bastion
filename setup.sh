@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#            SERVER SHIELD — LINUX VPS HARDENING & OPTIMIZATION
+#            BASTION — LINUX VPS HARDENING & OPTIMIZATION SUITE
+#                     Engineered with 🤍 by laguser
+#                  https://github.com/laguser/bastion
 #         Modes: [1] Automatic | [2] Manual Wizard | [3] AI (Gemini Flash)
 # ==============================================================================
 
@@ -13,11 +15,23 @@ C_YELLOW='\033[1;33m'
 C_BLUE='\033[0;34m'
 C_MAGENTA='\033[0;35m'
 C_CYAN='\033[0;36m'
+C_WHITE='\033[1;37m'
+C_GRAY='\033[0;90m'
 C_BOLD='\033[1m'
 NC='\033[0m'
 
+# Verify root privileges
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${C_RED}[ERROR] You must run this script as root!${NC}"
+    exit 1
+fi
+
+# Log full execution output to /var/log/bastion.log
+mkdir -p /var/log
+exec > >(tee -a /var/log/bastion.log) 2>&1
+
 show_header() {
-    clear
+    clear 2>/dev/null || true
     echo -e "${C_CYAN}${C_BOLD}"
 cat << 'EOF'
   ██████╗  █████╗ ███████╗████████╗██╗ ██████╗ ███╗   ██╗
@@ -27,31 +41,28 @@ cat << 'EOF'
   ██████╔╝██║  ██║███████║   ██║   ██║╚██████╔╝██║ ╚████║
   ╚═════╝ ╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝
 EOF
-    echo -e "${C_MAGENTA}   >> Bastion — Linux VPS Hardening & Optimization Suite <<${NC}"
-    echo -e "${C_BLUE}   >> Root Password Mode | Multi-Engine Setup <<${NC}\n"
+    echo -e "${C_GRAY}  ┌────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${C_GRAY}  │${NC} ${C_WHITE}${C_BOLD}BASTION${NC} — Modern Linux VPS Hardening & TCP Acceleration     ${C_GRAY}│${NC}"
+    echo -e "${C_GRAY}  │${NC} ${C_MAGENTA}Engineered by laguser${NC} ${C_GRAY}│${NC} ${C_BLUE}https://github.com/laguser/bastion${NC}  ${C_GRAY}│${NC}"
+    echo -e "${C_GRAY}  └────────────────────────────────────────────────────────────┘${NC}\n"
 }
 
 show_finish_banner() {
-    clear
+    # Preserves screen log and previous operation messages
+    echo ""
     echo -e "${C_GREEN}${C_BOLD}"
 cat << 'EOF'
-   ██████╗ ██████╗ ███╗   ███╗██████╗ ██╗     ███████╗████████╗███████╗██╗
-  ██╔════╝██╔═══██╗████╗ ████║██╔══██╗██║     ██╔════╝╚══██╔══╝██╔════╝██║
-  ██║     ██║   ██║██╔████╔██║██████╔╝██║     █████╗     ██║   █████╗  ██║
-  ██║     ██║   ██║██║╚██╔╝██║██╔═══╝ ██║     ██╔══╝     ██║   ██╔══╝  ╚═╝
-  ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║     ███████╗███████╗   ██║   ███████╗██╗
-   ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝   ╚═╝   ╚══════╝╚═╝
+  ███████╗██╗███╗   ██╗██╗███████╗██╗  ██╗███████╗██████╗ 
+  ██╔════╝██║████╗  ██║██║██╔════╝██║  ██║██╔════╝██╔══██╗
+  █████╗  ██║██╔██╗ ██║██║███████╗███████║█████╗  ██║  ██║
+  ██╔══╝  ██║██║╚██╗██║██║╚════██║██╔══██║██╔══╝  ██║  ██║
+  ██║     ██║██║ ╚████║██║███████║██║  ██║███████╗██████╔╝
+  ╚═╝     ╚═╝╚═╝  ╚═══╝╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═════╝ 
 EOF
-    echo -e "${NC}"
+    echo -e "${C_GRAY}  >> Hardening profile applied successfully by laguser/bastion <<${NC}\n"
 }
 
 show_header
-
-# Verify root privileges
-if [ "$EUID" -ne 0 ]; then
-    echo -e "${C_RED}[ERROR] You must run this script as root!${NC}"
-    exit 1
-fi
 
 # Input prompt helper with Enter-default capability (Safe: uses printf -v)
 prompt() {
@@ -148,6 +159,13 @@ ENABLE_BBR="y"
 HARDEN_SYSCTL="y"
 ENABLE_AUTO_UPDATES="y"
 
+# Virtualization Detection (LXC / OpenVZ containers cannot run custom kernel sysctl / swap)
+if command -v systemd-detect-virt &>/dev/null && systemd-detect-virt -c &>/dev/null; then
+    echo -e "${C_YELLOW}[!] Container virtualization detected (LXC/OpenVZ). Disabling swap and host kernel tuning.${NC}"
+    SWAP_SIZE_GB="0"
+    HARDEN_SYSCTL="n"
+fi
+
 # ==============================================================================
 # MODE LOGIC
 # ==============================================================================
@@ -165,7 +183,7 @@ if [ "$SETUP_MODE" = "2" ] || [ "$SETUP_MODE" = "manual" ]; then
     echo ""
     echo -e "${C_MAGENTA}${C_BOLD}┌──[ 2. FIREWALL (UFW) & PORTS ]${NC}"
     prompt OPEN_WEB "Allow incoming HTTP (80) & HTTPS (443) web ports? (y/n)" "y"
-    prompt EXTRA_PORTS "Open any additional custom ports? (e.g. 25,465,587,993,3000 or Enter to skip)" ""
+    prompt EXTRA_PORTS "Open any additional custom ports? (e.g. 51820/udp, 3000 or Enter to skip)" ""
 
     echo ""
     echo -e "${C_MAGENTA}${C_BOLD}┌──[ 3. FAIL2BAN BRUTE-FORCE SHIELD ]${NC}"
@@ -203,7 +221,7 @@ elif [ "$SETUP_MODE" = "3" ] || [ "$SETUP_MODE" = "ai" ]; then
     if [ -z "$GEMINI_KEY" ]; then
         echo -e "${C_RED}[!] API key cannot be empty. Falling back to Automatic mode.${NC}"
     else
-        prompt WORKLOAD_DESC "What is the primary workload of this server? (e.g., Docker, Web, Mail, VPN, Game, General)" "Web Server & General Docker"
+        prompt WORKLOAD_DESC "What is the primary workload of this server? (e.g., Docker, Web, VPN, Mail, General)" "Web Server & General Docker"
         echo -e "${C_BLUE}>>> Gathering server hardware and environment telemetry...${NC}"
         
         TOTAL_RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
@@ -255,27 +273,35 @@ print(json.dumps(payload))
             -H "x-goog-api-key: ${GEMINI_KEY}" \
             --data-binary @- 2>/dev/null || true)
 
-        # Safely parse JSON via stdin to eliminate Python string interpolation injection
-        AI_PARSED=$(echo "$AI_RAW_RESP" | python3 -c "
+        # Safely parse JSON via stdin to bash env variables without pipe-delimiter flaws
+        AI_ENV=$(echo "$AI_RAW_RESP" | python3 -c "
 import sys, json
 try:
     data = json.load(sys.stdin)
     text = data['candidates'][0]['content']['parts'][0]['text']
     conf = json.loads(text)
-    print(f\"{conf.get('ssh_port', 22)}|{conf.get('swap_size_gb', 2)}|{conf.get('swappiness', 10)}|{conf.get('open_web', True)}|{conf.get('enable_bbr', True)}|{conf.get('f2b_maxretry', 3)}|{conf.get('f2b_bantime', 7200)}|{conf.get('ai_reasoning', 'Optimized for current hardware')}\")
+    print(f\"AI_SSH={conf.get('ssh_port', 22)}\")
+    print(f\"AI_SWAP={conf.get('swap_size_gb', 2)}\")
+    print(f\"AI_SWAPPINESS={conf.get('swappiness', 10)}\")
+    print(f\"AI_WEB={'y' if conf.get('open_web', True) else 'n'}\")
+    print(f\"AI_BBR={'y' if conf.get('enable_bbr', True) else 'n'}\")
+    print(f\"AI_RETRY={conf.get('f2b_maxretry', 3)}\")
+    print(f\"AI_BAN={conf.get('f2b_bantime', 7200)}\")
+    clean_reason = str(conf.get('ai_reasoning', 'Optimized for current hardware')).replace('\"', '\\\"').replace('$', '\\$')
+    print(f'AI_REASON=\"{clean_reason}\"')
 except Exception:
     sys.exit(1)
 " 2>/dev/null || true)
 
-        if [ -n "$AI_PARSED" ]; then
-            IFS='|' read -r AI_SSH AI_SWAP AI_SWAPPINESS AI_WEB AI_BBR AI_RETRY AI_BAN AI_REASON <<< "$AI_PARSED"
-            SSH_PORT=$(clamp_uint "$AI_SSH" 1 65535 22)
-            SWAP_SIZE_GB=$(clamp_uint "$AI_SWAP" 0 64 2)
-            SWAPPINESS=$(clamp_uint "$AI_SWAPPINESS" 0 100 10)
-            [ "$AI_WEB" = "True" ] && OPEN_WEB="y" || OPEN_WEB="n"
-            [ "$AI_BBR" = "True" ] && ENABLE_BBR="y" || ENABLE_BBR="n"
-            F2B_MAXRETRY=$(clamp_uint "$AI_RETRY" 1 50 3)
-            F2B_BANTIME=$(clamp_uint "$AI_BAN" 60 31536000 7200)
+        if [ -n "$AI_ENV" ]; then
+            eval "$AI_ENV"
+            SSH_PORT=$(clamp_uint "${AI_SSH:-22}" 1 65535 22)
+            SWAP_SIZE_GB=$(clamp_uint "${AI_SWAP:-2}" 0 64 2)
+            SWAPPINESS=$(clamp_uint "${AI_SWAPPINESS:-10}" 0 100 10)
+            OPEN_WEB="${AI_WEB:-y}"
+            ENABLE_BBR="${AI_BBR:-y}"
+            F2B_MAXRETRY=$(clamp_uint "${AI_RETRY:-3}" 1 50 3)
+            F2B_BANTIME=$(clamp_uint "${AI_BAN:-7200}" 60 31536000 7200)
             
             echo -e "${C_GREEN}[✓] Gemini Flash Analysis Successful!${NC}"
             echo -e "${C_CYAN}AI Reasoning: ${NC}${AI_REASON}\n"
@@ -287,22 +313,31 @@ else
     echo -e "${C_GREEN}>>> Automatic Mode selected. Applying default hardening profile.${NC}"
 fi
 
-# Detect existing services to prevent accidental port lockout
+# Multi-Protocol Listening Port Auto-Detection (TCP & UDP)
 DETECTED_PORTS=()
 if command -v ss &>/dev/null; then
-    for p in 25 465 587 993 8080 3000; do
-        if ss -tlnH "sport = :$p" 2>/dev/null | grep -q ":$p"; then
-            DETECTED_PORTS+=("$p")
-        fi
-    done
+    mapfile -t DETECTED_PORTS < <(
+        ss -tulnH 2>/dev/null | awk '{split($5,a,":"); p=a[length(a)];
+            if ($1=="udp") print p"/udp"; else print p"/tcp"}' |
+        grep -vE '^(22|80|443)/' | sort -u
+    )
 fi
 
 if [ ${#DETECTED_PORTS[@]} -gt 0 ]; then
     echo -e "${C_YELLOW}>>> Detected active services on ports: ${DETECTED_PORTS[*]}${NC}"
+    DETECTED_CSV=$(IFS=,; echo "${DETECTED_PORTS[*]}")
     if [ -z "$EXTRA_PORTS" ]; then
-        EXTRA_PORTS=$(IFS=,; echo "${DETECTED_PORTS[*]}")
+        EXTRA_PORTS="$DETECTED_CSV"
     else
-        EXTRA_PORTS="${EXTRA_PORTS},$(IFS=,; echo "${DETECTED_PORTS[*]}")"
+        EXTRA_PORTS="${EXTRA_PORTS},${DETECTED_CSV}"
+    fi
+fi
+
+# Check for Port Conflicts before configuring SSH
+if [ "$SSH_PORT" -ne 22 ] && command -v ss &>/dev/null; then
+    if ss -tlnH "sport = :$SSH_PORT" 2>/dev/null | grep -q .; then
+        echo -e "${C_YELLOW}[!] Port $SSH_PORT is already bound by another service. Keeping SSH on port 22.${NC}"
+        SSH_PORT=22
     fi
 fi
 
@@ -332,7 +367,7 @@ printf "│ %-30s : %-25s │\n" "Kernel Hardening" "$HARDEN_SYSCTL"
 printf "│ %-30s : %-25s │\n" "Auto Security Updates" "$ENABLE_AUTO_UPDATES"
 echo -e "${C_CYAN}${C_BOLD}└───────────────────────────────────────────────────────────┘${NC}"
 
-prompt CONFIRM "Apply configuration now? (y/n)" "y"
+prompt CONFIRM "Apply configuration now? (y/n)" "n"
 if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
     echo -e "${C_RED}[!] Installation aborted by user.${NC}"
     exit 0
@@ -342,6 +377,17 @@ fi
 # EXECUTION
 # ==============================================================================
 
+# Create backups of critical files prior to mutation
+BACKUP_DIR="/var/backups/bastion/$(date +%s)"
+mkdir -p "$BACKUP_DIR"
+[ -f /etc/ssh/sshd_config ] && cp -a /etc/ssh/sshd_config "$BACKUP_DIR/sshd_config.bak" 2>/dev/null || true
+[ -f /etc/fstab ] && cp -a /etc/fstab "$BACKUP_DIR/fstab.bak" 2>/dev/null || true
+[ -f /etc/systemd/system.conf ] && cp -a /etc/systemd/system.conf "$BACKUP_DIR/system.conf.bak" 2>/dev/null || true
+if [ -d /etc/ufw ]; then
+    cp -a /etc/ufw/user.rules "$BACKUP_DIR/user.rules.bak" 2>/dev/null || true
+    cp -a /etc/ufw/user6.rules "$BACKUP_DIR/user6.rules.bak" 2>/dev/null || true
+fi
+
 echo ""
 echo -e "${C_BLUE}>>> [1/8] Updating package lists and upgrading software...${NC}"
 export DEBIAN_FRONTEND=noninteractive
@@ -349,39 +395,47 @@ apt-get update -y
 apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
 echo -e "${C_BLUE}>>> [2/8] Installing core security utilities (UFW, Fail2Ban, Chrony, Python3-Systemd)...${NC}"
-apt-get install -y ufw fail2ban curl wget htop iotop net-tools unattended-upgrades chrony python3-systemd
+apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+    ufw fail2ban curl wget unattended-upgrades chrony python3-systemd
 systemctl enable chrony --now >/dev/null 2>&1 || true
 
 echo -e "${C_BLUE}>>> [3/8] Configuring Virtual Memory & Swap...${NC}"
+DISK_FREE_GB=$(df -BG / 2>/dev/null | awk 'NR==2 {print $4}' | tr -d 'G')
 if [ "$SWAP_SIZE_GB" -gt 0 ]; then
     CURRENT_SWAP=$(free -m | awk '/^Swap:/ {print $2}')
     if [ "${CURRENT_SWAP:-0}" -gt 0 ]; then
         echo -e "${C_YELLOW}  -> Swap already present (${CURRENT_SWAP}MB). Skipping creation.${NC}"
+    elif [ "${DISK_FREE_GB:-0}" -lt "$((SWAP_SIZE_GB + 2))" ]; then
+        echo -e "${C_YELLOW}  -> Insufficient disk space (${DISK_FREE_GB:-0}GB free). Skipping swap creation.${NC}"
     else
         echo -e "${C_GREEN}  -> Allocating ${SWAP_SIZE_GB}GB swap file...${NC}"
         fallocate -l "${SWAP_SIZE_GB}G" /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=$((SWAP_SIZE_GB * 1024))
         chmod 600 /swapfile
-        mkswap /swapfile >/dev/null 2>&1
-        swapon /swapfile >/dev/null 2>&1
-        if ! grep -q '/swapfile' /etc/fstab 2>/dev/null; then
-            echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        if ! mkswap /swapfile >/dev/null 2>&1 || ! swapon /swapfile 2>/dev/null; then
+            rm -f /swapfile
+            echo -e "${C_YELLOW}  -> Swapfile unsupported or failed on this filesystem. Skipped.${NC}"
+        else
+            if ! grep -q '/swapfile' /etc/fstab 2>/dev/null; then
+                echo '/swapfile none swap sw,nofail 0 0' >> /etc/fstab
+            fi
+            echo -e "${C_GREEN}  -> Swap allocated and activated.${NC}"
         fi
     fi
 fi
 
 echo -e "${C_BLUE}>>> [4/8] Applying Kernel Hardening & TCP Acceleration (sysctl)...${NC}"
 
-# Check for BBR kernel module support
 BBR_SUPPORTED=0
 if [[ "$ENABLE_BBR" =~ ^[Yy]$ ]]; then
     modprobe tcp_bbr 2>/dev/null || true
     if sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -q bbr; then
         BBR_SUPPORTED=1
     else
-        echo -e "${C_YELLOW}  -> Kernel does not support BBR. Falling back to default congestion control.${NC}"
+        echo -e "${C_YELLOW}  -> Kernel does not support BBR. Retaining default congestion control.${NC}"
     fi
 fi
 
+if [[ "$HARDEN_SYSCTL" =~ ^[Yy]$ ]]; then
 cat << EOF > /etc/sysctl.d/99-server-hardening.conf
 # ==============================================================================
 # Google BBR TCP Congestion Control
@@ -392,7 +446,6 @@ $([ "$BBR_SUPPORTED" -eq 1 ] && echo "net.ipv4.tcp_congestion_control = bbr" || 
 # ==============================================================================
 # SYN-Flood & Denial of Service Protection
 # ==============================================================================
-$([[ "$HARDEN_SYSCTL" =~ ^[Yy]$ ]] && cat << 'SYS_BLOCK'
 net.ipv4.tcp_syncookies = 1
 net.ipv4.tcp_rfc1337 = 1
 net.ipv4.tcp_syn_retries = 2
@@ -405,6 +458,14 @@ net.ipv4.conf.default.accept_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.default.send_redirects = 0
 net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+# IPv6 Route Hardening
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_ra = 0
+net.ipv6.conf.default.accept_ra = 0
+
+# Filesystem & Kernel Memory Security
 fs.protected_hardlinks = 1
 fs.protected_symlinks = 1
 fs.protected_fifos = 2
@@ -412,8 +473,6 @@ fs.protected_regular = 2
 kernel.kptr_restrict = 2
 kernel.dmesg_restrict = 1
 kernel.yama.ptrace_scope = 1
-SYS_BLOCK
-)
 
 # ==============================================================================
 # High Bandwidth Buffer & Connection Queue Tuning
@@ -432,8 +491,9 @@ vm.swappiness = $SWAPPINESS
 vm.vfs_cache_pressure = 50
 EOF
 
-sysctl --system >/dev/null 2>&1 || true
+sysctl --system || true
 echo -e "${C_GREEN}  -> Sysctl configuration reloaded.${NC}"
+fi
 
 echo -e "${C_BLUE}>>> [5/8] Securing Shared Memory (/dev/shm)...${NC}"
 if [[ "$HARDEN_DEV_SHM" =~ ^[Yy]$ ]]; then
@@ -455,19 +515,18 @@ grep -q "DefaultLimitNOFILE=65535" /etc/systemd/system.conf 2>/dev/null || echo 
 
 echo -e "${C_BLUE}>>> [7/8] Hardening OpenSSH & Configuring Fail2Ban...${NC}"
 
-# Ensure /etc/ssh/sshd_config includes drop-in directory at the top
+# Ensure /etc/ssh/sshd_config includes drop-in directory
 if [ -f /etc/ssh/sshd_config ]; then
-    if ! grep -E -q "^\s*Include\s+/etc/ssh/sshd_config\.d/\*\.conf" /etc/ssh/sshd_config; then
+    if ! grep -q "Include /etc/ssh/sshd_config.d/\*.conf" /etc/ssh/sshd_config 2>/dev/null; then
         sed -i '1s|^|Include /etc/ssh/sshd_config.d/*.conf\n|' /etc/ssh/sshd_config
     fi
 fi
 
 mkdir -p /etc/ssh/sshd_config.d/
-# Prefix with 00- so our settings take precedence over cloud-init drop-ins (first-match wins in OpenSSH)
 SSH_HARDEN_CONF="/etc/ssh/sshd_config.d/00-bastion.conf"
 
 cat << EOF > "$SSH_HARDEN_CONF"
-# Bastion Hardened OpenSSH Configuration
+# Bastion Hardened OpenSSH Configuration (by laguser)
 Port $SSH_PORT
 PermitRootLogin yes
 PasswordAuthentication yes
@@ -476,12 +535,14 @@ MaxAuthTries 3
 PermitEmptyPasswords no
 X11Forwarding no
 AllowAgentForwarding no
+LogLevel VERBOSE
+MaxStartups 10:30:60
 ClientAliveInterval $SSH_TIMEOUT
 ClientAliveCountMax 2
 EOF
 
-# Handle Ubuntu 22.10+ / 24.04 systemd socket activation for SSH
-if systemctl is-active --quiet ssh.socket 2>/dev/null || [ -f /lib/systemd/system/ssh.socket ]; then
+# Handle systemd socket activation ONLY when ssh.socket is explicitly enabled
+if systemctl is-enabled --quiet ssh.socket 2>/dev/null; then
     mkdir -p /etc/systemd/system/ssh.socket.d
     cat << EOF > /etc/systemd/system/ssh.socket.d/port.conf
 [Socket]
@@ -493,7 +554,7 @@ EOF
 fi
 
 # Verify OpenSSH syntax before restarting
-if sshd -t 2>/dev/null; then
+if sshd -t >/dev/null 2>&1; then
     systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
     echo -e "${C_GREEN}  -> SSH service reloaded.${NC}"
 else
@@ -501,15 +562,17 @@ else
     rm -f "$SSH_HARDEN_CONF"
 fi
 
-# Safe verification: Check if SSH is indeed listening on the desired port
+# Verification: Check if SSH is indeed listening on the desired port
 sleep 1
-if command -v ss &>/dev/null && ss -tlnH "sport = :$SSH_PORT" 2>/dev/null | grep -q ":$SSH_PORT"; then
-    echo -e "${C_GREEN}  -> Verified: SSH actively listening on port $SSH_PORT.${NC}"
+SSH_VERIFIED=0
+if command -v ss &>/dev/null && ss -tlnH "sport = :$SSH_PORT" 2>/dev/null | grep -q .; then
+    SSH_VERIFIED=1
+    echo -e "${C_GREEN}  -> [✓] Verified: SSH actively listening on port $SSH_PORT.${NC}"
 else
-    echo -e "${C_YELLOW}  -> Note: SSH might still be on fallback port. Maintaining port 22 access in firewall.${NC}"
+    echo -e "${C_YELLOW}  -> [!] Note: SSH is not responding on port $SSH_PORT. Fallback port 22 maintained.${NC}"
 fi
 
-# Fail2ban configuration: Use systemd backend on modern distros & add safe ignoreip
+# Fail2ban configuration: Use systemd backend & safe ignoreip & monitor active + fallback port
 CURRENT_CLIENT_IP=$(echo "${SSH_CLIENT:-${SSH_CONNECTION:-}}" | awk '{print $1}')
 IGNORE_IPS="127.0.0.1/8 ::1"
 if [ -n "$CURRENT_CLIENT_IP" ] && [[ "$CURRENT_CLIENT_IP" =~ ^[0-9a-fA-F.:]+$ ]]; then
@@ -523,6 +586,7 @@ elif [ -f /var/log/auth.log ]; then
     F2B_BACKEND="/var/log/auth.log"
 fi
 
+mkdir -p /etc/fail2ban/jail.d/
 cat << EOF > /etc/fail2ban/jail.d/custom-ssh.local
 [DEFAULT]
 bantime = $F2B_BANTIME
@@ -532,7 +596,7 @@ ignoreip = $IGNORE_IPS
 
 [sshd]
 enabled = true
-port = $SSH_PORT
+port = $SSH_PORT,22
 mode = aggressive
 backend = $F2B_BACKEND
 maxretry = $F2B_MAXRETRY
@@ -552,7 +616,7 @@ ufw default allow outgoing >/dev/null 2>&1
 # Use 'ufw limit' for brute-force protection at firewall layer
 ufw limit "$SSH_PORT/tcp" comment "Bastion SSH Rate-Limited" >/dev/null 2>&1
 if [ "$SSH_PORT" -ne 22 ]; then
-    # Keep 22 open as temporary emergency fallback
+    # Keep 22 open as emergency fallback
     ufw limit 22/tcp comment "SSH Emergency Fallback" >/dev/null 2>&1
 fi
 
@@ -561,11 +625,11 @@ if [[ "$OPEN_WEB" =~ ^[Yy]$ ]]; then
     ufw allow 443/tcp comment "HTTPS" >/dev/null 2>&1
 fi
 
+# Strict regex validation for custom ports
 if [ -n "$EXTRA_PORTS" ]; then
     for item in $(echo "$EXTRA_PORTS" | tr ',; ' ' '); do
-        clean_item=$(echo "$item" | tr -cd '0-9/tcpudp:')
-        if [ -n "$clean_item" ]; then
-            ufw allow "$clean_item" comment "Bastion Custom Port" >/dev/null 2>&1 || true
+        if [[ "$item" =~ ^[0-9]{1,5}(:[0-9]{1,5})?(/(tcp|udp))?$ ]]; then
+            ufw allow "$item" comment "Bastion Custom Port" >/dev/null 2>&1 || true
         fi
     done
 fi
@@ -598,15 +662,29 @@ else
 fi
 
 # ==============================================================================
-# FINISH BANNER
+# FINISH BANNER & SECURITY REPORT
 # ==============================================================================
 show_finish_banner
-echo -e "${C_CYAN}  Target User:     ${C_GREEN}root${NC}"
-echo -e "  Auth Method:     ${C_GREEN}Password Authentication${NC}"
-echo -e "  SSH Port:        ${C_GREEN}${SSH_PORT}${NC}"
-echo -e "  TCP BBR:         ${C_GREEN}$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'active')${NC}"
-echo -e "  Firewall:        ${C_GREEN}$(ufw status | grep Status)${NC}"
+echo -e "${C_CYAN}  Target User:       ${C_WHITE}root${NC}"
+echo -e "  Auth Method:       ${C_WHITE}Password Authentication${NC}"
+echo -e "  SSH Port:          ${C_WHITE}${SSH_PORT}${NC}"
+if [ "$SSH_VERIFIED" -eq 1 ]; then
+    echo -e "  SSH Status:        ${C_GREEN}[✔] Actively listening on port ${SSH_PORT}${NC}"
+else
+    echo -e "  SSH Status:        ${C_RED}[!] Not responding on port ${SSH_PORT} — Connect via fallback port 22!${NC}"
+fi
+echo -e "  TCP BBR:           ${C_GREEN}$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'active')${NC}"
+echo -e "  Firewall:          ${C_GREEN}$(ufw status 2>/dev/null | grep Status || echo 'Status: active')${NC}"
+echo -e "  Install Log:       ${C_GRAY}/var/log/bastion.log${NC}"
+echo -e "  Config Backups:    ${C_GRAY}${BACKUP_DIR}${NC}"
 echo ""
+
+if [ "$SSH_PORT" -ne 22 ]; then
+    echo -e "${C_YELLOW}${C_BOLD}ℹ️  EMERGENCY FALLBACK PORT 22 IS CURRENTLY ACTIVE${NC}"
+    echo -e "Once you have verified login on port ${SSH_PORT}, close port 22 by running:"
+    echo -e "   ${C_CYAN}sudo ufw delete limit 22/tcp${NC}\n"
+fi
+
 echo -e "${C_RED}${C_BOLD}⚠️  CRITICAL: DO NOT CLOSE THIS SESSION YET!${NC}"
 echo -e "Open a NEW terminal tab/window and verify login before disconnecting:"
 SERVER_PUBLIC_IP=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || echo "YOUR_SERVER_IP")
