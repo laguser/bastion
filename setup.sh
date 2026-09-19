@@ -72,7 +72,9 @@ prompt() {
         echo -e -n "${C_CYAN}[Press Enter to skip]${NC}: "
     fi
 
-    if [ -t 0 ] || [ -r /dev/tty ]; then
+    if [ -t 0 ]; then
+        read -r input || input=""
+    elif (exec </dev/tty) 2>/dev/null; then
         read -r input </dev/tty || input=""
     else
         read -r input || input=""
@@ -96,7 +98,9 @@ prompt_secret() {
     fi
 
     echo -e -n "${C_YELLOW}⚡ ${C_BOLD}${question}${NC}: "
-    if [ -t 0 ] || [ -r /dev/tty ]; then
+    if [ -t 0 ]; then
+        read -s -r input || input=""
+    elif (exec </dev/tty) 2>/dev/null; then
         read -s -r input </dev/tty || input=""
     else
         read -s -r input || input=""
