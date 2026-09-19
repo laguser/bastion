@@ -29,7 +29,7 @@
 Выполните одну команду от имени `root`:
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh)
+curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh | tr -d '\r' | bash
 ```
 
 ---
