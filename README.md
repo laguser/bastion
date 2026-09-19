@@ -3,10 +3,10 @@
   <img src="assets/bastion.png" width="620" alt="Bastion">
 
   <h2>bastion</h2>
-  <p><i>intelligent server hardening & performance tuning</i></p>
+  <p><i>hardened linux vps security & optimization suite</i></p>
   
   <p>
-    <code>root</code> · <code>bbr</code> · <code>fail2ban</code> · <code>ufw</code> · <code>gemini-flash</code>
+    <code>root</code> · <code>bbr</code> · <code>fail2ban</code> · <code>ufw</code> · <code>ed25519</code>
   </p>
 
   <p>
@@ -15,7 +15,7 @@
 
   <p>
     <img src="https://img.shields.io/badge/os-ubuntu_%7C_debian-000000?style=flat-square&logo=linux&logoColor=white" alt="OS">
-    <img src="https://img.shields.io/badge/ai-gemini_flash-000000?style=flat-square&logo=google&logoColor=white" alt="AI">
+    <img src="https://img.shields.io/badge/author-laguser-000000?style=flat-square&logo=github&logoColor=white" alt="Author">
     <img src="https://img.shields.io/badge/tcp-google_bbr-000000?style=flat-square" alt="TCP">
     <img src="https://img.shields.io/badge/license-mit-000000?style=flat-square" alt="License">
   </p>
@@ -38,11 +38,12 @@ bash <(curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh
 
 ## ◈ О проекте
 
-**Bastion** — минималистичный инструмент для превращения свежего VPS в защищенный и оптимизированный сервер за 60 секунд.
+**Bastion** — инструмент от **laguser** для превращения свежего Linux VPS (Ubuntu / Debian) в защищённый и производительный сервер за 60 секунд. 
+Полностью автономен, не зависит от сторонних облачных API, исключает любые риски удалённых инъекций и обеспечивает нулевой риск локаута.
 
-* Работает напрямую из-под `root` (вход по паролю сохранён).
-* Никакого визуального шума — чистый интерактивный интерфейс.
-* Тюнинг ядра по стандартам безопасности и скорости.
+* Работает под `root` с поддержкой как SSH-ключей, так и паролей.
+* Чистый интерфейс с выбором дефолтных значений по нажатию `[Enter]`.
+* Независимый сетевой разгон (BBR) и глубокое ячеечное ядровое экранирование.
 
 ---
 
@@ -50,40 +51,32 @@ bash <(curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh
 
 | Режим | Описание |
 | :--- | :--- |
-| **`[1] Automatic`** | Моментальное применение оптимальных настроек без лишних вопросов. |
-| **`[2] Manual`** | Пошаговый диалог. Достаточно нажимать `[Enter]` для выбора дефолтных значений. |
-| **`[3] AI-Powered`** | Анализ через **Gemini Flash**. Нейросеть считывает CPU, RAM, диск и подбирает параметры. |
+| **`[1] Automatic (Recommended)`** | Моментальное развёртывание эталонного production-профиля безопасности без облачных зависимостей. |
+| **`[2] Interactive Wizard`** | Пошаговый интерактивный мастер: добавление SSH-ключей, отключение паролей, кастомные порты, swap и лимиты. |
 
 ---
 
 ## ◈ Безопасность
 
-* **OpenSSH Hardening**: Приоритетный drop-in (`00-bastion.conf`), `MaxAuthTries 3`, `LoginGraceTime 30`, `LogLevel VERBOSE`, `MaxStartups 10:30:60`, отключение X11.
-* **Lockout Protection**: Проверка фактического прослушивания порта через `ss` перед отключением резервного доступа, аварийный порт 22 с rate-limit.
-* **Fail2Ban (systemd-native)**: Анализ системного журнала напрямую через `python3-systemd`, авто-вайтлист текущего IP администратора (`ignoreip`).
-* **UFW Firewall & Multi-Protocol Auto-Detect**: Интеллектуальное сканирование активных TCP/UDP сервисов (WireGuard, OpenVPN, Mail, Docker) с сохранением доступа и автоматическим бэкапом правил в `/var/backups/bastion/`.
-* **Защита `/dev/shm`**: Монтирование с флагами `noexec,nosuid,nodev` против исполнения скриптов и полезных нагрузок из shared memory.
-* **Ядро (DoS Shield)**: Криптографические `tcp_syncookies`, защита от TIME-WAIT атак (`tcp_rfc1337 = 1`), фильтрация обратного пути (`rp_filter`), защита от спуфинга и ICMP Broadcast.
-* **Безопасность IPv6**: Полная блокировка Router Advertisements (`accept_ra = 0`) и ICMP redirects.
-* **Права ядра & Память**: Ограничение доступа к `dmesg`, адресам ядра (`kptr_restrict = 2`), защита трассировки процессов (`kernel.yama.ptrace_scope = 1`).
-* **Аварийный откат**: Автоматическое резервное копирование `sshd_config`, `fstab`, `system.conf` и `ufw` перед любыми модификациями.
-* **Автообновления**: Фоновая служба `unattended-upgrades` для своевременных патчей безопасности.
+* **Строгая криптография OpenSSH**: Приоритетный drop-in (`00-bastion.conf`), современные алгоритмы обмена ключами (`curve25519-sha256`, `diffie-hellman-group16-sha512`), шифры (`chacha20-poly1305`, `aes256-gcm`) и MAC (`hmac-sha2-512-etm`). Отключение X11 и TCP forwarding по умолчанию.
+* **Управление аутентификацией**: Интерактивное добавление открытых ключей SSH (`authorized_keys`) и возможность полного отключения входа по паролю (`PasswordAuthentication no`, `PermitRootLogin prohibit-password`).
+* **Защита от Lockout**: Проверка синтаксиса `sshd -t` с авто-откатом при ошибках, валидация привязки портов (`ss -tlnH`), аварийный порт 22 с rate-limit и гарантированное сокет-детектирование (`systemctl is-enabled ssh.socket`).
+* **Fail2Ban (systemd-native)**: Чтение журнала systemd напрямую через `python3-systemd`, авто-вайтлист IP администратора (`ignoreip`), одновременная защита активного и аварийного портов.
+* **UFW Firewall & Multi-Protocol Auto-Detect**: Автоматическое определение активных TCP и UDP сервисов (WireGuard, OpenVPN, Mail, Docker) с сохранением доступа и бэкапом правил в `/var/backups/bastion/`.
+* **Защита `/dev/shm`**: Монтирование с флагами `noexec,nosuid,nodev` против исполнения вредоносных скриптов из общей памяти.
+* **Ядро (DoS Shield)**: Криптографические `tcp_syncookies`, RFC 1337 (TIME-WAIT assasination fix), строгая фильтрация обратного пути (`rp_filter`), запрет ICMP redirects и спуфинга.
+* **Безопасность IPv6**: Полная блокировка Router Advertisements (`accept_ra = 0`) и перенаправлений.
+* **Автообновления**: Службы `unattended-upgrades` с преднастроенным файлом `50unattended-upgrades` ( security-репозитории, автоочистка неиспользуемых ядер и зависимостей).
+* **Аварийный откат**: Автоматический бэкап `sshd_config`, `fstab`, `system.conf` и `ufw` в `/var/backups/bastion/`.
 
 ---
 
 ## ◈ Оптимизация
 
-* **Google BBR**: Алгоритм контроля перегрузки TCP от Google — максимальная пропускная способность и минимальный пинг.
+* **Google BBR**: Независимый модуль `98-bbr.conf` с очередями `fq` — максимальная пропускная способность и минимальный пинг даже при частичных ограничениях контейнеров.
 * **Буферы TCP**: Расширение окон сокетов до 16 МБ для высокоскоростных гигабитных каналов.
-* **Лимиты файлов**: Поднятие системного ограничения `nofile` до 65 535 (никаких `Too many open files`).
+* **Лимиты файлов**: Поднятие системного ограничения `nofile` до 65 535.
 * **Swap & Filesystem Check**: Интеллектуальное выделение Swap с проверкой свободного места на диске, флагом `nofail` в `/etc/fstab` и приоритетом RAM (`swappiness = 10`).
-* **Детект виртуализации**: Автоматическое отключение тюнинга хостового ядра и swap внутри легковесных контейнеров (LXC/OpenVZ).
-
----
-
-## ◈ Смена пароля
-
-В конце любого из режимов скрипт предлагает задать новый пароль для `root`.
 
 ---
 
@@ -91,11 +84,12 @@ bash <(curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh
 
 ## ◈ Overview
 
-**Bastion** is a minimalist automation suite that hardens and tunes a fresh Linux VPS in under a minute.
+**Bastion** is an autonomous security hardening and performance tuning tool engineered by **laguser** for modern Linux VPS (Ubuntu & Debian).
+Completely offline-capable with zero cloud API dependencies, zero injection attack surface, and rock-solid lockout prevention.
 
-* Root-focused workflow (preserves password authentication).
-* Minimalist terminal interface with smart Enter-defaults.
-* Kernel-level hardening & network congestion tuning.
+* Designed for `root` administration with SSH key & password flexibility.
+* Clean visual UI with intelligent Enter-defaults.
+* Independent Google BBR network acceleration and kernel-level defense.
 
 ---
 
@@ -103,36 +97,12 @@ bash <(curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh
 
 | Mode | Description |
 | :--- | :--- |
-| **`[1] Automatic`** | Instant hardening using battle-tested defaults. |
-| **`[2] Manual`** | Interactive wizard. Press `[Enter]` to accept recommended values. |
-| **`[3] AI-Powered`** | Tailored calibration via **Google Gemini Flash** based on server specs. |
+| **`[1] Automatic (Recommended)`** | Instant deployment of hardened production defaults with zero manual prompts. |
+| **`[2] Interactive Wizard`** | Guided step-by-step setup: paste SSH keys, toggle password auth, tune ports, swap, and fail2ban. |
 
 ---
 
-## ◈ Hardening Features
+## ◈ Author
 
-* **OpenSSH Hardening**: Highest priority drop-in (`00-bastion.conf`), `MaxAuthTries 3`, `LoginGraceTime 30s`, `LogLevel VERBOSE`, `MaxStartups 10:30:60`, keepalive watchdog.
-* **Lockout Protection**: Verifies socket binding before dropping fallbacks; maintains emergency rate-limited port 22 access.
-* **Fail2Ban (systemd-native)**: Native journal stream via `python3-systemd`, dynamic whitelist for active SSH client IP (`ignoreip`).
-* **Firewall (UFW) & Auto-Detect**: Intelligent multi-protocol (TCP & UDP) detection of running workloads (WireGuard, OpenVPN, Mail, Docker) with automated backup to `/var/backups/bastion/`.
-* **Protected `/dev/shm`**: Mounted with `noexec,nosuid,nodev` to neutralize RAM payload execution.
-* **Kernel DoS Shield**: TCP SYN cookies, RFC 1337 TIME-WAIT assassination protection, reverse path filtering, IPv6 RA rejection, and restricted `dmesg`/ptrace access.
-* **Container Aware**: Automatically adapts configuration if running inside LXC or OpenVZ environments.
-* **Unattended Upgrades**: Automated upstream security patches without disruption.
-
----
-
-## ◈ Performance Tuning
-
-* **Google BBR**: Next-generation TCP flow control yielding reduced bufferbloat and latency.
-* **Extended TCP Windows**: Up to 16MB read/write socket buffers for gigabit bandwidth.
-* **Resource Limits**: System-wide file descriptor ceiling raised to 65,535.
-* **Virtual Memory**: Safe swap allocation with disk bounds, `nofail` flag, and `vm.swappiness = 10`.
-
----
-
-<br>
-<div align="center">
-  <p>Engineered with 🤍 by <a href="https://github.com/laguser">laguser</a></p>
-  <sub><i>Security by design · Performance by default</i></sub>
-</div>
+Engineered with 🤍 by **laguser** — [github.com/laguser](https://github.com/laguser)  
+Project Repository: [github.com/laguser/bastion](https://github.com/laguser/bastion)
