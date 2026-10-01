@@ -26,11 +26,14 @@
 
 ### ⚡ Быстрый старт / Quick Start
 
-Выполните одну команду от имени `root`:
+От имени `root` (рекомендуется — сначала скачать и просмотреть скрипт):
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh | tr -d '\r' | bash
+curl -sSLo setup.sh https://raw.githubusercontent.com/laguser/bastion/main/setup.sh
+less setup.sh && bash setup.sh
 ```
+
+Быстрый вариант в одну строку: `curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh | bash`
 
 ---
 
@@ -39,7 +42,7 @@ curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh | tr -
 ## ◈ О проекте
 
 **Bastion** — инструмент от **laguser** для превращения свежего Linux VPS (Ubuntu / Debian) в защищённый и производительный сервер за 60 секунд. 
-Полностью автономен, не зависит от сторонних облачных API, исключает любые риски удалённых инъекций и обеспечивает нулевой риск локаута.
+Полностью автономен, не зависит от сторонних облачных API, не делает внешних запросов во время работы (кроме `apt`) и минимизирует риск локаута: пароль не отключается в том же запуске, где ставится ключ, конфиг `sshd` проверяется до смены порта, порт 22 остаётся аварийным.
 
 * Работает под `root` с поддержкой как SSH-ключей, так и паролей.
 * Чистый интерфейс с выбором дефолтных значений по нажатию `[Enter]`.
@@ -85,7 +88,7 @@ curl -sSL https://raw.githubusercontent.com/laguser/bastion/main/setup.sh | tr -
 ## ◈ Overview
 
 **Bastion** is an autonomous security hardening and performance tuning tool engineered by **laguser** for modern Linux VPS (Ubuntu & Debian).
-Completely offline-capable with zero cloud API dependencies, zero injection attack surface, and rock-solid lockout prevention.
+Completely offline-capable with no external requests at runtime (apt aside), and lockout-safe by design: password auth is never disabled in the same run that installs a key, `sshd -t` runs before any port change, and port 22 stays open as a fallback.
 
 * Designed for `root` administration with SSH key & password flexibility.
 * Clean visual UI with intelligent Enter-defaults.
