@@ -5,18 +5,12 @@
 #                  https://github.com/laguser/bastion
 #         Modes: [1] Automatic (Recommended) | [2] Interactive Wizard
 #
-#   Patched by Axiom:
-#   - SSH pubkey format is validated at collection time, before anything
-#     is written to disk.
-#   - Writing to /root/.ssh/authorized_keys happens ONLY inside the
-#     EXECUTION phase, after CONFIRM — a "n" at the summary now truly
-#     aborts with zero side effects.
-#   - Password auth is NEVER disabled in the same run that installs the
-#     key. The server has no way to test the client's private key, so
-#     "verify then disable" can't happen automatically. Instead: the key
-#     is installed, PasswordAuthentication stays "yes", and a helper
-#     script is dropped for the operator to run themselves once they've
-#     confirmed key-based login works from a second session.
+#   Safety model:
+#   - Prompts only collect input. Nothing touches the disk until CONFIRM.
+#   - Password auth is never disabled in the run that installs the key (the
+#     server cannot test your private key). A helper script is dropped for you
+#     to run after verifying key login from a second session.
+#   - sshd config is validated with `sshd -t` BEFORE the port/socket changes.
 # ==============================================================================
 
 set -uo pipefail
@@ -39,8 +33,21 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Log full execution output to /var/log/bastion.log
+# Supported platform check (Debian / Ubuntu family only)
+if ! command -v apt-get &>/dev/null || [ ! -r /etc/os-release ]; then
+    echo -e "${C_RED}[ERROR] Bastion supports Debian/Ubuntu (apt) only.${NC}"
+    exit 1
+fi
+# shellcheck disable=SC1091
+. /etc/os-release
+case "${ID:-}:${ID_LIKE:-}" in
+    ubuntu:*|debian:*|*:*debian*|*:*ubuntu*) ;;
+    *) echo -e "${C_RED}[ERROR] Unsupported distribution: ${ID:-unknown}.${NC}"; exit 1 ;;
+esac
+
+# Log full execution output to /var/log/bastion.log (root-only)
 mkdir -p /var/log
+( umask 077; touch /var/log/bastion.log )
 exec > >(tee -a /var/log/bastion.log) 2>&1
 
 show_header() {
@@ -148,7 +155,12 @@ clamp_uint() {
 # Validate an OpenSSH public key line by format only (no filesystem touch)
 is_valid_pubkey() {
     local key="$1"
-    [[ "$key" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)\ [A-Za-z0-9+/]+=*(\ .*)?$ ]]
+    [[ "$key" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)\ [A-Za-z0-9+/]+=*(\ .*)?$ ]] || return 1
+    # Structural check: ssh-keygen must be able to parse the key blob
+    if command -v ssh-keygen &>/dev/null; then
+        ssh-keygen -l -f <(printf '%s\n' "$key") &>/dev/null || return 1
+    fi
+    return 0
 }
 
 # ==============================================================================
@@ -197,7 +209,7 @@ if [ "$SETUP_MODE" = "2" ] || [ "$SETUP_MODE" = "wizard" ] || [ "$SETUP_MODE" = 
     prompt SSH_PORT "SSH Port (Changing from 22 reduces automated scanning noise)" "22"
     SSH_PORT=$(clamp_uint "$SSH_PORT" 1 65535 22)
 
-    prompt SSH_TIMEOUT "Disconnect idle sessions after how many seconds?" "300"
+    prompt SSH_TIMEOUT "Keepalive interval in seconds (drops unresponsive clients after 2 missed probes)" "300"
     SSH_TIMEOUT=$(clamp_uint "$SSH_TIMEOUT" 30 86400 300)
 
     prompt ADD_SSH_KEY "Would you like to install an SSH Public Key for root login? (y/n)" "n"
@@ -268,14 +280,16 @@ fi
 DETECTED_PORTS=()
 if command -v ss &>/dev/null; then
     mapfile -t DETECTED_PORTS < <(
-        ss -tulnH 2>/dev/null | awk '{split($5,a,":"); p=a[length(a)];
-            if ($1=="udp") print p"/udp"; else print p"/tcp"}' |
-        grep -vE '^(22|80|443)/' | sort -u
+        ss -tulnH 2>/dev/null | awk '{
+            addr=$5; port=addr; sub(/.*:/,"",port); host=addr; sub(/:[^:]*$/,"",host)
+            if (host ~ /^127\./ || host ~ /^\[?::1\]?$/) next
+            if ($1=="udp") print port"/udp"; else print port"/tcp"}' |
+        grep -E '^[0-9]+/(tcp|udp)$' | grep -vE '^(22|80|443)/' | sort -u
     )
 fi
 
 if [ ${#DETECTED_PORTS[@]} -gt 0 ]; then
-    echo -e "${C_YELLOW}>>> Detected active services on ports: ${DETECTED_PORTS[*]}${NC}"
+    echo -e "${C_YELLOW}>>> Publicly listening services (loopback excluded) will stay reachable: ${DETECTED_PORTS[*]}${NC}"
     DETECTED_CSV=$(IFS=,; echo "${DETECTED_PORTS[*]}")
     if [ -z "$EXTRA_PORTS" ]; then
         EXTRA_PORTS="$DETECTED_CSV"
@@ -286,7 +300,7 @@ fi
 
 # Check for Port Conflicts before configuring SSH
 if [ "$SSH_PORT" -ne 22 ] && command -v ss &>/dev/null; then
-    if ss -tlnH "sport = :$SSH_PORT" 2>/dev/null | grep -q .; then
+    if ss -tlnpH "sport = :$SSH_PORT" 2>/dev/null | grep -v 'sshd' | grep -q .; then
         echo -e "${C_YELLOW}[!] Port $SSH_PORT is already bound by another service. Keeping SSH on port 22.${NC}"
         SSH_PORT=22
     fi
@@ -316,7 +330,7 @@ fi
 echo -e "${C_CYAN}${C_BOLD}┌────────────────── CONFIGURATION SUMMARY ──────────────────┐${NC}"
 printf "│ %-30s : %-25s │\n" "Root Auth Method" "$AUTH_DESC"
 printf "│ %-30s : %-25s │\n" "SSH Port" "$SSH_PORT"
-printf "│ %-30s : %-25s │\n" "Idle Session Timeout" "${SSH_TIMEOUT}s"
+printf "│ %-30s : %-25s │\n" "SSH Keepalive Interval" "${SSH_TIMEOUT}s"
 printf "│ %-30s : %-25s │\n" "SSH TCP Forwarding" "$ALLOW_TCP_FORWARDING"
 printf "│ %-30s : %-25s │\n" "Web Ports (80/443)" "$OPEN_WEB"
 printf "│ %-30s : %-25s │\n" "Extra Service Ports" "$([ -n "$EXTRA_PORTS" ] && echo "$EXTRA_PORTS" || echo "None")"
@@ -351,13 +365,13 @@ fi
 
 echo ""
 echo -e "${C_BLUE}>>> [1/8] Updating package lists and upgrading software...${NC}"
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1
+apt-get update -y </dev/null
+apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" </dev/null
 
 echo -e "${C_BLUE}>>> [2/8] Installing core security utilities (UFW, Fail2Ban, Chrony, Python3-Systemd)...${NC}"
 apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
-    ufw fail2ban curl wget unattended-upgrades chrony python3-systemd
+    ufw fail2ban curl wget unattended-upgrades chrony python3-systemd </dev/null
 systemctl enable chrony --now >/dev/null 2>&1 || true
 
 echo -e "${C_BLUE}>>> [3/8] Configuring Virtual Memory & Swap...${NC}"
@@ -395,8 +409,11 @@ if [[ "$ENABLE_BBR" =~ ^[Yy]$ ]]; then
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 EOF
-        sysctl -p /etc/sysctl.d/98-bbr.conf >/dev/null 2>&1 || true
-        echo -e "${C_GREEN}  -> Google TCP BBR enabled.${NC}"
+        if sysctl -p /etc/sysctl.d/98-bbr.conf >/dev/null 2>&1; then
+            echo -e "${C_GREEN}  -> Google TCP BBR enabled.${NC}"
+        else
+            echo -e "${C_YELLOW}  -> BBR config written but could not be applied live (takes effect after reboot).${NC}"
+        fi
     else
         echo -e "${C_YELLOW}  -> Kernel does not support BBR. Retaining default congestion control.${NC}"
     fi
@@ -420,12 +437,19 @@ net.ipv4.conf.default.accept_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.default.send_redirects = 0
 net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv4.conf.all.log_martians = 1
+net.ipv4.conf.default.log_martians = 1
 
 # IPv6 Route Hardening
 net.ipv6.conf.all.accept_redirects = 0
 net.ipv6.conf.default.accept_redirects = 0
 net.ipv6.conf.all.accept_ra = 0
 net.ipv6.conf.default.accept_ra = 0
+net.ipv6.conf.all.accept_source_route = 0
+net.ipv6.conf.default.accept_source_route = 0
 
 # Filesystem & Kernel Memory Security
 fs.protected_hardlinks = 1
@@ -435,6 +459,9 @@ fs.protected_regular = 2
 kernel.kptr_restrict = 2
 kernel.dmesg_restrict = 1
 kernel.yama.ptrace_scope = 1
+kernel.randomize_va_space = 2
+kernel.unprivileged_bpf_disabled = 1
+fs.suid_dumpable = 0
 
 # ==============================================================================
 # High Bandwidth Buffer & Connection Queue Tuning
@@ -446,15 +473,22 @@ net.ipv4.tcp_wmem = 4096 65536 16777216
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 15
 
-# ==============================================================================
-# Memory Management
-# ==============================================================================
-vm.swappiness = $SWAPPINESS
 vm.vfs_cache_pressure = 50
 EOF
 
-    sysctl --system >/dev/null 2>&1 || true
-    echo -e "${C_GREEN}  -> Sysctl security configuration applied.${NC}"
+    # Apply per-key so one unsupported key does not hide the rest
+    SYSCTL_FAILED=$(sysctl -p /etc/sysctl.d/99-server-hardening.conf 2>&1 >/dev/null | grep -c 'cannot stat\|Invalid argument\|Permission denied' || true)
+    if [ "${SYSCTL_FAILED:-0}" -gt 0 ]; then
+        echo -e "${C_YELLOW}  -> Sysctl applied; ${SYSCTL_FAILED} key(s) unsupported on this kernel (ignored).${NC}"
+    else
+        echo -e "${C_GREEN}  -> Sysctl security configuration applied.${NC}"
+    fi
+fi
+
+# Swappiness is independent of the security shield
+if [ "$SWAP_SIZE_GB" -gt 0 ] || [[ "$HARDEN_SYSCTL" =~ ^[Yy]$ ]]; then
+    echo "vm.swappiness = $SWAPPINESS" > /etc/sysctl.d/97-bastion-swap.conf
+    sysctl -p /etc/sysctl.d/97-bastion-swap.conf >/dev/null 2>&1 || true
 fi
 
 echo -e "${C_BLUE}>>> [5/8] Securing Shared Memory (/dev/shm)...${NC}"
@@ -462,8 +496,11 @@ if [[ "$HARDEN_DEV_SHM" =~ ^[Yy]$ ]]; then
     if ! grep -q "[[:space:]]/dev/shm[[:space:]]" /etc/fstab 2>/dev/null; then
         echo "tmpfs /dev/shm tmpfs defaults,noexec,nosuid,nodev 0 0" >> /etc/fstab
     fi
-    mount -o remount,noexec,nosuid,nodev /dev/shm >/dev/null 2>&1 || true
-    echo -e "${C_GREEN}  -> /dev/shm protected with noexec,nosuid,nodev.${NC}"
+    if mount -o remount,noexec,nosuid,nodev /dev/shm >/dev/null 2>&1; then
+        echo -e "${C_GREEN}  -> /dev/shm protected with noexec,nosuid,nodev.${NC}"
+    else
+        echo -e "${C_YELLOW}  -> fstab entry written; live remount failed (takes effect after reboot).${NC}"
+    fi
 fi
 
 echo -e "${C_BLUE}>>> [6/8] Increasing File Descriptor Limits...${NC}"
@@ -473,7 +510,8 @@ cat << 'EOF' > /etc/security/limits.d/99-nofile.conf
 root soft nofile 65535
 root hard nofile 65535
 EOF
-grep -q "DefaultLimitNOFILE=65535" /etc/systemd/system.conf 2>/dev/null || echo "DefaultLimitNOFILE=65535" >> /etc/systemd/system.conf
+mkdir -p /etc/systemd/system.conf.d
+printf '[Manager]\nDefaultLimitNOFILE=65535\n' > /etc/systemd/system.conf.d/99-bastion-nofile.conf
 
 echo -e "${C_BLUE}>>> [7/8] Hardening OpenSSH & Configuring Fail2Ban...${NC}"
 
@@ -514,6 +552,7 @@ PubkeyAuthentication yes
 LoginGraceTime 30
 MaxAuthTries 3
 PermitEmptyPasswords no
+PermitUserEnvironment no
 X11Forwarding no
 AllowTcpForwarding $ALLOW_TCP_FORWARDING
 AllowAgentForwarding no
@@ -528,35 +567,48 @@ Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.
 MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
 EOF
 
-# Handle systemd socket activation ONLY when ssh.socket is explicitly enabled
-if systemctl is-enabled --quiet ssh.socket 2>/dev/null; then
-    mkdir -p /etc/systemd/system/ssh.socket.d
-    cat << EOF > /etc/systemd/system/ssh.socket.d/port.conf
+# sshd -t needs the privsep dir, which may not exist when sshd is socket-activated
+mkdir -p /run/sshd
+
+SSHD_ERR=$(mktemp)
+if sshd -t 2>"$SSHD_ERR"; then
+    # Config is valid: only now is it safe to touch socket activation
+    if systemctl is-enabled --quiet ssh.socket 2>/dev/null; then
+        mkdir -p /etc/systemd/system/ssh.socket.d
+        cat << EOF > /etc/systemd/system/ssh.socket.d/port.conf
 [Socket]
 ListenStream=
 ListenStream=$SSH_PORT
 EOF
-    systemctl daemon-reload >/dev/null 2>&1 || true
-    systemctl restart ssh.socket >/dev/null 2>&1 || true
-fi
-
-# Verify OpenSSH syntax before restarting
-if sshd -t >/dev/null 2>&1; then
-    systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
-    echo -e "${C_GREEN}  -> SSH service reloaded.${NC}"
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        systemctl restart ssh.socket >/dev/null 2>&1 || true
+    fi
+    if systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null; then
+        echo -e "${C_GREEN}  -> SSH service restarted.${NC}"
+    else
+        echo -e "${C_YELLOW}  -> SSH restart reported an error. Check: systemctl status ssh${NC}"
+    fi
 else
     echo -e "${C_RED}  -> SSH config error detected! Reverting $SSH_HARDEN_CONF.${NC}"
+    sed 's/^/     /' "$SSHD_ERR"
     rm -f "$SSH_HARDEN_CONF"
+    SSH_PORT=22
 fi
+rm -f "$SSHD_ERR"
 
-# Verification: Check if SSH is indeed listening on the desired port
-sleep 1
+# Verification: wait up to 5s for sshd to listen on the intended port
 SSH_VERIFIED=0
-if command -v ss &>/dev/null && ss -tlnH "sport = :$SSH_PORT" 2>/dev/null | grep -q .; then
-    SSH_VERIFIED=1
+for _ in 1 2 3 4 5; do
+    if command -v ss &>/dev/null && ss -tlnH "sport = :$SSH_PORT" 2>/dev/null | grep -q .; then
+        SSH_VERIFIED=1
+        break
+    fi
+    sleep 1
+done
+if [ "$SSH_VERIFIED" -eq 1 ]; then
     echo -e "${C_GREEN}  -> [✓] Verified: SSH actively listening on port $SSH_PORT.${NC}"
 else
-    echo -e "${C_YELLOW}  -> [!] Note: SSH is not responding on port $SSH_PORT. Fallback port 22 maintained.${NC}"
+    echo -e "${C_YELLOW}  -> [!] SSH is not responding on port $SSH_PORT. Fallback port 22 maintained.${NC}"
 fi
 
 # --- Deferred password-auth disable: dropped only if a key was installed ---
@@ -574,6 +626,9 @@ set -euo pipefail
 if [ "\$EUID" -ne 0 ]; then echo "Run as root."; exit 1; fi
 CONF="$SSH_HARDEN_CONF"
 if [ ! -f "\$CONF" ]; then echo "Bastion SSH config not found at \$CONF"; exit 1; fi
+if ! grep -qE '^(ssh-|ecdsa-|sk-)' /root/.ssh/authorized_keys 2>/dev/null; then
+    echo "No public key in /root/.ssh/authorized_keys — refusing to disable password login."; exit 1
+fi
 sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' "\$CONF"
 sed -i 's/^PermitRootLogin yes/PermitRootLogin prohibit-password/' "\$CONF"
 if sshd -t; then
@@ -605,6 +660,9 @@ elif [ -f /var/log/auth.log ]; then
     F2B_BACKEND="/var/log/auth.log"
 fi
 
+F2B_PORT="$SSH_PORT"
+[ "$SSH_PORT" -ne 22 ] && F2B_PORT="$SSH_PORT,22"
+
 mkdir -p /etc/fail2ban/jail.d/
 cat << EOF > /etc/fail2ban/jail.d/custom-ssh.local
 [DEFAULT]
@@ -615,7 +673,7 @@ ignoreip = $IGNORE_IPS
 
 [sshd]
 enabled = true
-port = $SSH_PORT,22
+port = $F2B_PORT
 mode = aggressive
 backend = $F2B_BACKEND
 maxretry = $F2B_MAXRETRY
@@ -657,6 +715,7 @@ ufw --force enable >/dev/null 2>&1
 echo -e "${C_GREEN}  -> UFW firewall enabled with rate-limited SSH protection.${NC}"
 
 if [[ "$ENABLE_AUTO_UPDATES" =~ ^[Yy]$ ]]; then
+    [ -f /etc/apt/apt.conf.d/50unattended-upgrades ] && cp -a /etc/apt/apt.conf.d/50unattended-upgrades "$BACKUP_DIR/50unattended-upgrades.bak"
     cat << 'EOF' > /etc/apt/apt.conf.d/50unattended-upgrades
 Unattended-Upgrade::Allowed-Origins {
     "${distro_id}:${distro_codename}-security";
@@ -693,8 +752,15 @@ prompt CHANGE_ROOT_PASSWORD "Would you like to set a new root password now? (y/n
 
 if [[ "$CHANGE_ROOT_PASSWORD" =~ ^[Yy]$ ]]; then
     echo -e "${C_YELLOW}Please type your new root password below:${NC}"
-    passwd root
-    echo -e "${C_GREEN}Root password updated successfully.${NC}"
+    if (exec </dev/tty) 2>/dev/null; then
+        if passwd root </dev/tty >/dev/tty 2>&1; then
+            echo -e "${C_GREEN}Root password updated successfully.${NC}"
+        else
+            echo -e "${C_RED}Root password was NOT changed.${NC}"
+        fi
+    else
+        echo -e "${C_RED}No TTY available. Run 'passwd root' manually.${NC}"
+    fi
 else
     echo -e "${C_BLUE}Skipped root password update.${NC}"
 fi
@@ -728,7 +794,9 @@ fi
 
 echo -e "${C_RED}${C_BOLD}⚠️  CRITICAL: DO NOT CLOSE THIS SESSION YET!${NC}"
 echo -e "Open a NEW terminal tab/window and verify login before disconnecting:"
-SERVER_PUBLIC_IP=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || echo "YOUR_SERVER_IP")
+SERVER_PUBLIC_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") {print $(i+1); exit}}')
+SERVER_PUBLIC_IP=${SERVER_PUBLIC_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}
+SERVER_PUBLIC_IP=${SERVER_PUBLIC_IP:-YOUR_SERVER_IP}
 if [ "$SSH_PORT" -eq 22 ]; then
     echo -e "   ${C_YELLOW}ssh root@${SERVER_PUBLIC_IP}${NC}"
 else
