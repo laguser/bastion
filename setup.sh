@@ -45,6 +45,29 @@ case "${ID:-}:${ID_LIKE:-}" in
     *) echo -e "${C_RED}[ERROR] Unsupported distribution: ${ID:-unknown}.${NC}"; exit 1 ;;
 esac
 
+# Optional non-interactive / custom CLI flags
+AUTO_MODE=0
+RUN_AUDIT_ONLY=0
+SKIP_AUDIT=0
+for arg in "$@"; do
+    case "$arg" in
+        --auto|-y) AUTO_MODE=1 ;;
+        --audit-only) RUN_AUDIT_ONLY=1 ;;
+        --skip-audit) SKIP_AUDIT=1 ;;
+    esac
+done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$RUN_AUDIT_ONLY" -eq 1 ]; then
+    if [ -f "$SCRIPT_DIR/audit.sh" ]; then
+        bash "$SCRIPT_DIR/audit.sh"
+        exit $?
+    else
+        echo "audit.sh not found in $SCRIPT_DIR"
+        exit 1
+    fi
+fi
+
 # Log full execution output to /var/log/bastion.log (root-only)
 mkdir -p /var/log
 ( umask 077; touch /var/log/bastion.log )
@@ -163,15 +186,12 @@ is_valid_pubkey() {
     return 0
 }
 
-# ==============================================================================
-# MODE SELECTION
-# ==============================================================================
-echo -e "${C_BOLD}Select Configuration Mode:${NC}"
-echo -e "  ${C_CYAN}[1] Automatic (Recommended)${NC} — Production security profile with zero cloud dependency"
-echo -e "  ${C_CYAN}[2] Interactive Wizard${NC}     — Step-by-step custom questionnaire (SSH keys, ports, limits)"
-echo ""
-
-prompt SETUP_MODE "Choose mode (1 or 2)" "1"
+if [ "$AUTO_MODE" -eq 1 ]; then
+    SETUP_MODE="1"
+    echo -e "${C_GREEN}>>> Non-interactive auto mode flag specified (--auto / -y).${NC}"
+else
+    prompt SETUP_MODE "Choose mode (1 or 2)" "1"
+fi
 
 # Default Variables
 SSH_PORT="22"
@@ -342,10 +362,20 @@ printf "│ %-30s : %-25s │\n" "Kernel Hardening" "$HARDEN_SYSCTL"
 printf "│ %-30s : %-25s │\n" "Auto Security Updates" "$ENABLE_AUTO_UPDATES"
 echo -e "${C_CYAN}${C_BOLD}└───────────────────────────────────────────────────────────┘${NC}"
 
-prompt CONFIRM "Apply configuration now? (y/n)" "n"
+if [ "$AUTO_MODE" -eq 1 ]; then
+    CONFIRM="y"
+else
+    prompt CONFIRM "Apply configuration now? (y/n)" "n"
+fi
 if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
     echo -e "${C_RED}[!] Installation aborted by user. No files were modified.${NC}"
     exit 0
+fi
+
+# Pre-execution Backdoor & Compromise Audit
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$SKIP_AUDIT" -eq 0 ] && [ -f "$SCRIPT_DIR/audit.sh" ]; then
+    bash "$SCRIPT_DIR/audit.sh" || true
 fi
 
 # ==============================================================================
@@ -456,12 +486,13 @@ fs.protected_hardlinks = 1
 fs.protected_symlinks = 1
 fs.protected_fifos = 2
 fs.protected_regular = 2
+fs.suid_dumpable = 0
 kernel.kptr_restrict = 2
 kernel.dmesg_restrict = 1
 kernel.yama.ptrace_scope = 1
 kernel.randomize_va_space = 2
 kernel.unprivileged_bpf_disabled = 1
-fs.suid_dumpable = 0
+net.core.bpf_jit_harden = 2
 
 # ==============================================================================
 # High Bandwidth Buffer & Connection Queue Tuning
@@ -553,6 +584,8 @@ LoginGraceTime 30
 MaxAuthTries 3
 PermitEmptyPasswords no
 PermitUserEnvironment no
+HostbasedAuthentication no
+IgnoreRhosts yes
 X11Forwarding no
 AllowTcpForwarding $ALLOW_TCP_FORWARDING
 AllowAgentForwarding no
