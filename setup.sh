@@ -204,7 +204,23 @@ EXTRA_PORTS=""
 F2B_MAXRETRY="3"
 F2B_BANTIME="7200"
 F2B_FINDTIME="600"
-SWAP_SIZE_GB="2"
+# --- Intelligent Environment & Hardware Discovery ---
+TOTAL_RAM_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}' || echo "1024")
+TOTAL_RAM_MB=${TOTAL_RAM_MB:-1024}
+
+# Smart Swap Recommendation:
+# <= 2GB RAM -> 2GB Swap
+# 2GB - 8GB RAM -> 4GB Swap
+# > 8GB RAM -> 4GB Swap or 0 if large NVMe not desired
+if [ "$TOTAL_RAM_MB" -le 2048 ]; then
+    RECOMMENDED_SWAP="2"
+elif [ "$TOTAL_RAM_MB" -le 8192 ]; then
+    RECOMMENDED_SWAP="4"
+else
+    RECOMMENDED_SWAP="4"
+fi
+
+SWAP_SIZE_GB="$RECOMMENDED_SWAP"
 SWAPPINESS="10"
 HARDEN_DEV_SHM="y"
 ENABLE_BBR="y"
@@ -213,11 +229,30 @@ ENABLE_AUTO_UPDATES="y"
 HARDEN_PROCFS="y"
 RESTRICT_COMPILERS="y"
 
+# Cloud Provider & Virtualization Detection
+DETECTED_CLOUD="Generic VPS"
+if [ -r /sys/class/dmi/id/sys_vendor ]; then
+    VENDOR=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true)
+    PRODUCT=$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)
+    case "${VENDOR} ${PRODUCT}" in
+        *Amazon*|*AWS*) DETECTED_CLOUD="Amazon Web Services (AWS)" ;;
+        *Google*) DETECTED_CLOUD="Google Cloud Platform (GCP)" ;;
+        *Microsoft*|*Azure*) DETECTED_CLOUD="Microsoft Azure" ;;
+        *DigitalOcean*) DETECTED_CLOUD="DigitalOcean" ;;
+        *Hetzner*) DETECTED_CLOUD="Hetzner Cloud" ;;
+        *OVH*) DETECTED_CLOUD="OVHcloud" ;;
+        *Linode*|*Akamai*) DETECTED_CLOUD="Linode / Akamai" ;;
+        *Vultr*) DETECTED_CLOUD="Vultr" ;;
+    esac
+fi
+
 # Virtualization Detection (LXC / OpenVZ containers cannot run custom kernel sysctl / swap)
 if command -v systemd-detect-virt &>/dev/null && systemd-detect-virt -c &>/dev/null; then
     echo -e "${C_YELLOW}[!] Container virtualization detected (LXC/OpenVZ). Disabling swap and host kernel tuning.${NC}"
     SWAP_SIZE_GB="0"
     HARDEN_SYSCTL="n"
+else
+    echo -e "${C_CYAN}[i] Environment: ${DETECTED_CLOUD} | RAM: ${TOTAL_RAM_MB}MB | Smart Swap: ${SWAP_SIZE_GB}GB${NC}"
 fi
 
 # ==============================================================================
@@ -352,6 +387,7 @@ if [ -n "$SSH_PUBKEY" ]; then
 fi
 
 echo -e "${C_CYAN}${C_BOLD}┌────────────────── CONFIGURATION SUMMARY ──────────────────┐${NC}"
+printf "│ %-30s : %-25s │\n" "Platform Environment" "$DETECTED_CLOUD"
 printf "│ %-30s : %-25s │\n" "Root Auth Method" "$AUTH_DESC"
 printf "│ %-30s : %-25s │\n" "SSH Port" "$SSH_PORT"
 printf "│ %-30s : %-25s │\n" "SSH Keepalive Interval" "${SSH_TIMEOUT}s"
