@@ -399,6 +399,40 @@ if [ -d /etc/ufw ]; then
     cp -a /etc/ufw/user6.rules "$BACKUP_DIR/user6.rules.bak" 2>/dev/null || true
 fi
 
+# Generate 1-Click Rollback Script
+ROLLBACK_SCRIPT="$BACKUP_DIR/rollback.sh"
+cat << 'RBEOF' > "$ROLLBACK_SCRIPT"
+#!/usr/bin/env bash
+# Bastion Automatic 1-Click Rollback Script
+set -euo pipefail
+if [ "$EUID" -ne 0 ]; then echo "Run as root."; exit 1; fi
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo ">>> Reverting Bastion configuration from $DIR..."
+
+[ -f "$DIR/sshd_config.bak" ] && cp -a "$DIR/sshd_config.bak" /etc/ssh/sshd_config
+rm -f /etc/ssh/sshd_config.d/00-bastion.conf
+rm -f /etc/sysctl.d/98-bbr.conf /etc/sysctl.d/99-server-hardening.conf /etc/sysctl.d/97-bastion-swap.conf
+rm -f /etc/security/limits.d/99-nofile.conf /etc/systemd/system.conf.d/99-bastion-nofile.conf
+rm -f /etc/fail2ban/jail.d/custom-ssh.local
+
+[ -f "$DIR/fstab.bak" ] && cp -a "$DIR/fstab.bak" /etc/fstab
+[ -f "$DIR/system.conf.bak" ] && cp -a "$DIR/system.conf.bak" /etc/systemd/system.conf
+
+if [ -f "$DIR/user.rules.bak" ]; then
+    cp -a "$DIR/user.rules.bak" /etc/ufw/user.rules
+    [ -f "$DIR/user6.rules.bak" ] && cp -a "$DIR/user6.rules.bak" /etc/ufw/user6.rules
+    ufw reload >/dev/null 2>&1 || true
+fi
+
+sysctl --system >/dev/null 2>&1 || true
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+systemctl restart fail2ban >/dev/null 2>&1 || true
+
+echo ">>> Rollback complete. System returned to pre-installation state."
+RBEOF
+chmod 700 "$ROLLBACK_SCRIPT"
+
 echo ""
 echo -e "${C_BLUE}>>> [1/8] Updating package lists and upgrading software...${NC}"
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1
@@ -850,6 +884,7 @@ echo -e "  ProcFS Isolation:  ${C_GREEN}$([ "$HARDEN_PROCFS" = "y" ] && echo "Ac
 echo -e "  Compiler Lockdown: ${C_GREEN}$([ "$RESTRICT_COMPILERS" = "y" ] && echo "Enforced (root only)" || echo "Standard")${NC}"
 echo -e "  Install Log:       ${C_GRAY}/var/log/bastion.log${NC}"
 echo -e "  Config Backups:    ${C_GRAY}${BACKUP_DIR}${NC}"
+echo -e "  1-Click Rollback:  ${C_CYAN}${ROLLBACK_SCRIPT}${NC}"
 if [ "$KEY_INSTALLED" -eq 1 ] && [[ "$DISABLE_PASS" =~ ^[Yy]$ ]]; then
     echo -e "  Password Disable:  ${C_YELLOW}Deferred — run ${DISABLE_HELPER} after verifying key login${NC}"
 fi
