@@ -63,11 +63,11 @@ run_audit() {
     # Empty passwords check in /etc/shadow
     if [ -r /etc/shadow ]; then
         local empty_pw
-        empty_pw=$(awk -F: '($2 == "" || $2 == "!" || $2 == "*") {next} {if (length($2) < 5) print $1}' /etc/shadow 2>/dev/null || true)
+        empty_pw=$(awk -F: '($2 == "") {print $1}' /etc/shadow 2>/dev/null || true)
         if [ -n "$empty_pw" ]; then
-            notice "Accounts with suspicious/empty password hashes: $empty_pw"
+            warn "Accounts with completely BLANK password hashes (instant login without password!): $empty_pw"
         else
-            ok "No accounts with blank/trivial passwords found in /etc/shadow."
+            ok "No accounts with blank passwords found in /etc/shadow."
         fi
     fi
 

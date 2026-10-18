@@ -210,6 +210,8 @@ HARDEN_DEV_SHM="y"
 ENABLE_BBR="y"
 HARDEN_SYSCTL="y"
 ENABLE_AUTO_UPDATES="y"
+HARDEN_PROCFS="y"
+RESTRICT_COMPILERS="y"
 
 # Virtualization Detection (LXC / OpenVZ containers cannot run custom kernel sysctl / swap)
 if command -v systemd-detect-virt &>/dev/null && systemd-detect-virt -c &>/dev/null; then
@@ -290,6 +292,8 @@ if [ "$SETUP_MODE" = "2" ] || [ "$SETUP_MODE" = "wizard" ] || [ "$SETUP_MODE" = 
     prompt ENABLE_BBR "Enable Google BBR Congestion Control (Faster network)? (y/n)" "y"
     prompt HARDEN_SYSCTL "Apply kernel security shield (SYN-Flood cookies, anti-spoof)? (y/n)" "$HARDEN_SYSCTL"
     prompt ENABLE_AUTO_UPDATES "Enable automatic background security updates? (y/n)" "y"
+    prompt HARDEN_PROCFS "Hide processes of other users (/proc hidepid=2)? (y/n)" "$HARDEN_PROCFS"
+    prompt RESTRICT_COMPILERS "Restrict compiler access (gcc/g++/make) to root only? (y/n)" "$RESTRICT_COMPILERS"
 
 else
     # ---------------- AUTOMATIC MODE ----------------
@@ -360,6 +364,8 @@ printf "│ %-30s : %-25s │\n" "Secure /dev/shm" "$HARDEN_DEV_SHM"
 printf "│ %-30s : %-25s │\n" "Google TCP BBR" "$ENABLE_BBR"
 printf "│ %-30s : %-25s │\n" "Kernel Hardening" "$HARDEN_SYSCTL"
 printf "│ %-30s : %-25s │\n" "Auto Security Updates" "$ENABLE_AUTO_UPDATES"
+printf "│ %-30s : %-25s │\n" "Hide /proc (hidepid=2)" "$HARDEN_PROCFS"
+printf "│ %-30s : %-25s │\n" "Restrict Compilers" "$RESTRICT_COMPILERS"
 echo -e "${C_CYAN}${C_BOLD}└───────────────────────────────────────────────────────────┘${NC}"
 
 if [ "$AUTO_MODE" -eq 1 ]; then
@@ -531,6 +537,34 @@ if [[ "$HARDEN_DEV_SHM" =~ ^[Yy]$ ]]; then
         echo -e "${C_GREEN}  -> /dev/shm protected with noexec,nosuid,nodev.${NC}"
     else
         echo -e "${C_YELLOW}  -> fstab entry written; live remount failed (takes effect after reboot).${NC}"
+    fi
+fi
+
+# Hardening /proc filesystem (hidepid=2 prevents seeing other users processes)
+if [[ "$HARDEN_PROCFS" =~ ^[Yy]$ ]]; then
+    if ! grep -q "[[:space:]]/proc[[:space:]]" /etc/fstab 2>/dev/null; then
+        echo "proc /proc proc defaults,hidepid=2 0 0" >> /etc/fstab
+    fi
+    if mount -o remount,hidepid=2 /proc >/dev/null 2>&1; then
+        echo -e "${C_GREEN}  -> /proc hardened with hidepid=2 (inter-process isolation).${NC}"
+    else
+        echo -e "${C_YELLOW}  -> /proc fstab entry recorded (takes full effect on reboot).${NC}"
+    fi
+fi
+
+# Restricting compilers from unprivileged accounts
+if [[ "$RESTRICT_COMPILERS" =~ ^[Yy]$ ]]; then
+    COMPILERS=(gcc g++ make as cc x86_64-linux-gnu-gcc)
+    RESTRICTED_COUNT=0
+    for comp in "${COMPILERS[@]}"; do
+        comp_path=$(command -v "$comp" 2>/dev/null || true)
+        if [ -n "$comp_path" ] && [ -f "$comp_path" ]; then
+            chmod 700 "$comp_path" 2>/dev/null || true
+            ((RESTRICTED_COUNT++)) || true
+        fi
+    done
+    if [ "$RESTRICTED_COUNT" -gt 0 ]; then
+        echo -e "${C_GREEN}  -> Restriced execution rights on $RESTRICTED_COUNT compiler(s) to root only.${NC}"
     fi
 fi
 
@@ -812,6 +846,8 @@ else
 fi
 echo -e "  Google TCP BBR:    ${C_GREEN}$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'active')${NC}"
 echo -e "  Firewall:          ${C_GREEN}$(ufw status 2>/dev/null | grep Status || echo 'Status: active')${NC}"
+echo -e "  ProcFS Isolation:  ${C_GREEN}$([ "$HARDEN_PROCFS" = "y" ] && echo "Active (hidepid=2)" || echo "Standard")${NC}"
+echo -e "  Compiler Lockdown: ${C_GREEN}$([ "$RESTRICT_COMPILERS" = "y" ] && echo "Enforced (root only)" || echo "Standard")${NC}"
 echo -e "  Install Log:       ${C_GRAY}/var/log/bastion.log${NC}"
 echo -e "  Config Backups:    ${C_GRAY}${BACKUP_DIR}${NC}"
 if [ "$KEY_INSTALLED" -eq 1 ] && [[ "$DISABLE_PASS" =~ ^[Yy]$ ]]; then
